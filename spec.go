@@ -14,6 +14,13 @@ const (
 	// clustering, no `=value` syntax. Values follow as the next argument.
 	// Used by find(1).
 	styleFind
+	// styleWrapper: command is a transparent wrapper that execs the argv after
+	// a literal `--` separator. Pre-`--` segment matches GNU-style flags from
+	// spec.Flags plus optional positionals (gated by AllowAnyPositional). The
+	// wrapped command is looked up in safeCommands and matched recursively, so
+	// safety is inherited rather than loosened. Used by `devenv shell --` and
+	// `nix shell PKGS --`.
+	styleWrapper
 )
 
 // flagSpec describes one allowed flag for a command.
@@ -75,6 +82,8 @@ func (s *commandSpec) match(args []string) bool {
 		return s.matchGNU(args)
 	case styleFind:
 		return s.matchFind(args)
+	case styleWrapper:
+		return s.matchWrapper(args)
 	default:
 		failLoud("unknown flag style: %d", s.Style)
 		return false // unreachable
@@ -176,6 +185,96 @@ func (s *commandSpec) handlePositionals(args []string) bool {
 		return true
 	}
 	return len(args) == 0
+}
+
+// matchWrapper accepts argv of the shape `[flag…] [positional…] -- CMD [ARG…]`.
+// Pre-`--` flags must match spec.Flags (GNU style). Pre-`--` positionals are
+// accepted iff spec.AllowAnyPositional is true. The `--` separator is REQUIRED:
+// without it (or with no command after it) we fall through, since bare wrapper
+// invocations like `devenv shell` open an interactive shell whose safety cannot
+// be statically classified. The tail after `--` is looked up in safeCommands
+// and matched recursively, so the wrapper inherits the wrapped command's safety
+// rules verbatim — it never loosens them.
+func (s *commandSpec) matchWrapper(args []string) bool {
+	i := 0
+	for i < len(args) {
+		arg := args[i]
+
+		if arg == "--" {
+			tail := args[i+1:]
+			if len(tail) == 0 {
+				return false // `devenv shell --` with no command
+			}
+			sub, ok := safeCommands[tail[0]]
+			if !ok {
+				return false
+			}
+			return sub.match(tail[1:])
+		}
+
+		// Long flag: `--name` or `--name=value`.
+		if strings.HasPrefix(arg, "--") && len(arg) > 2 {
+			name, hasVal := arg[2:], false
+			if eq := strings.IndexByte(name, '='); eq >= 0 {
+				name = name[:eq]
+				hasVal = true
+			}
+			f, ok := s.findLong(name)
+			if !ok {
+				return false
+			}
+			if hasVal {
+				if !f.TakesArg && !f.OptionalArg {
+					return false
+				}
+			} else if f.TakesArg {
+				if i+1 >= len(args) {
+					return false
+				}
+				i++
+			}
+			i++
+			continue
+		}
+
+		// Short flag cluster.
+		if strings.HasPrefix(arg, "-") && len(arg) > 1 {
+			cluster := arg[1:]
+			consumedNext := false
+			for j := 0; j < len(cluster); j++ {
+				letter := string(cluster[j])
+				f, ok := s.findShort(letter)
+				if !ok {
+					return false
+				}
+				if f.TakesArg {
+					if j+1 < len(cluster) {
+						// rest of cluster is the value
+					} else {
+						if i+1 >= len(args) {
+							return false
+						}
+						consumedNext = true
+					}
+					break
+				}
+			}
+			i++
+			if consumedNext {
+				i++
+			}
+			continue
+		}
+
+		// Positional before `--`. Only allowed if the spec opts in.
+		if !s.AllowAnyPositional {
+			return false
+		}
+		i++
+	}
+
+	// No `--` encountered: wrapper invoked without an explicit command.
+	return false
 }
 
 func (s *commandSpec) matchFind(args []string) bool {

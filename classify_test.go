@@ -202,6 +202,22 @@ func TestMustAllow(t *testing.T) {
 
 		// `--` separator
 		"cat -- --weird-filename",
+
+		// Tier D — wrappers (recursive classification)
+		"devenv shell -- git status",
+		"devenv shell -- ls -la",
+		"devenv shell -- jj log",
+		"devenv shell -- cat foo.txt",
+		"devenv shell -- rg pattern",
+		"devenv shell --impure -- git diff",
+		"devenv shell --clean -- ls",
+		"devenv shell -v --impure -- git status",
+		"devenv shell -- git status 2>&1",
+		"nix shell nixpkgs#hello -- cat /etc/hosts",
+		"nix shell nixpkgs#hello nixpkgs#ripgrep -- rg foo",
+		"nix shell --impure nixpkgs#hello -- ls",
+		// Composition: wrapper inside wrapper.
+		"devenv shell -- nix shell nixpkgs#ripgrep -- rg foo",
 	}
 	for _, c := range cases {
 		if got := classifyCommand(c); got != decisionAllow {
@@ -405,6 +421,23 @@ func TestMustNotAllow(t *testing.T) {
 
 		// Function definition
 		"foo() { echo hi; }",
+
+		// Tier D — wrappers: failure modes
+		"devenv shell",                              // no `--` → interactive shell
+		"devenv shell --",                           // `--` but no wrapped command
+		"devenv shell -- rm foo",                    // rm not whitelisted
+		"devenv shell -- bash -c 'echo hi'",         // bash not whitelisted
+		"devenv shell -- quarto render foo.qmd",     // quarto not whitelisted
+		"devenv shell -- git push",                  // git push not whitelisted
+		"devenv shell --unknown-flag -- git status", // unknown pre-sep flag
+		"devenv shell foo -- git status",            // positional before `--`, devenv shell takes none
+		"devenv shell --run 'echo x'",               // --run-style flag not in spec
+		"devenv up -- ls",                           // wrong subcommand
+		"devenv shell -- $(whoami)",                 // non-literal wrapped command
+		// nix shell wrapper failure modes
+		"nix shell -- git push",                     // wrapped write
+		"nix shell -- rm foo",                       // wrapped write
+		"nix shell --run 'rm x' nixpkgs#hello",      // --run not whitelisted on nix shell
 	}
 	for _, c := range cases {
 		if got := classifyCommand(c); got != decisionFallThrough {

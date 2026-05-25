@@ -95,3 +95,28 @@ Once the binary is on `$PATH`, add this to `~/.claude/settings.json`:
    each known write-mode flag plus an `--unknown-flag` form.
 4. `nix flake check` must pass before the change can
    be trusted.
+
+## Flag styles
+
+- **`styleGNU`** (default): standard `-x`/`--name`/`--name=value`/clustered
+  shorts. Used by most commands and all `Subcommands` dispatch.
+- **`styleFind`**: every flag is `-name` form (single dash, full word), no
+  clustering, no `=value`. Used by `find(1)`.
+- **`styleWrapper`**: transparent wrapper for `[flag…] [positional…] -- CMD
+  [ARG…]`. The literal `--` is REQUIRED — without it, the spec falls through
+  (this is what makes `devenv shell` distinct from `devenv shell -- CMD`). The
+  tail after `--` is looked up in `safeCommands` and matched recursively, so
+  the wrapped command's whitelist rules apply unchanged. Pre-`--` positionals
+  are accepted iff `AllowAnyPositional` is true (used for `nix shell PKGS --`).
+
+### Deferred wrapper shapes
+
+These are useful but each needs its own style/handling — bundling them with v1
+would obscure the design.
+
+- **Flag-introduced** (`nix develop -c CMD`, `xargs -I{} CMD …`) — needs a
+  `WrapFlag` variant naming which flag introduces the wrapped command.
+- **Inline** (`env VAR=val CMD`, `nice CMD`, `nice -n 10 CMD`) — first
+  non-flag positional starts the wrapped command, no `--` required.
+- **AST-level** (`time CMD`) — bash parses `time` as `TimeClause`, currently
+  rejected in `classifyCmd`. Would add a recursive case there.

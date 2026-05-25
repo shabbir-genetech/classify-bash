@@ -1152,6 +1152,15 @@ var safeCommands = map[string]*commandSpec{
 	// === Tier C: flag-aware dual-use =====================================
 
 	"find": findSpec(),
+
+	// === Tier D: transparent wrappers (recursive classification) =========
+	// These commands exec the argv after a literal `--` separator. The tail
+	// is recursively classified against safeCommands, so the wrapper's safety
+	// is entirely determined by the wrapped command — it never loosens rules.
+	// The `--` is REQUIRED; bare invocations open an interactive shell and
+	// fall through. See styleWrapper in spec.go.
+
+	"devenv": devenvSpec(),
 }
 
 func grepSpec() *commandSpec {
@@ -1913,7 +1922,63 @@ func nixSpec() *commandSpec {
 			"flake":         nixFlakeSpec(),
 			"search":        nixGenericSpec(),
 			"hash":          nixHashSpec(),
+			"shell":         nixShellSpec(),
 		},
+	}
+}
+
+// nixShellSpec: transparent wrapper. `nix shell PKGS... -- CMD [ARGS]` runs CMD
+// in an env with PKGS on PATH. Safety = safety of CMD; deliberately EXCLUDED:
+// --command/-c (flag-introduced wrapper variant, deferred to v2),
+// --run (shell-eval string — unsafe by design).
+func nixShellSpec() *commandSpec {
+	return &commandSpec{
+		Style: styleWrapper,
+		Flags: []flagSpec{
+			{Long: "impure"},
+			{Long: "offline"},
+			{Long: "verbose"}, {Short: "v"},
+			{Long: "quiet"},
+			{Long: "debug"},
+			{Long: "log-format", TakesArg: true},
+			{Long: "print-build-logs"}, {Short: "L"},
+			{Long: "option", TakesArg: true},
+			{Long: "store", TakesArg: true},
+			{Long: "extra-experimental-features", TakesArg: true},
+			{Long: "extra-substituters", TakesArg: true},
+		},
+		AllowAnyPositional: true, // package installables (e.g. nixpkgs#hello)
+	}
+}
+
+// devenvSpec: top-level `devenv` command. Only `shell --` is whitelisted in v1.
+// Other subcommands (up, init, test, build, etc.) all mutate state and are
+// deliberately out of scope. They fall through to a normal prompt.
+func devenvSpec() *commandSpec {
+	return &commandSpec{
+		Style: styleGNU,
+		Subcommands: map[string]*commandSpec{
+			"shell": devenvShellSpec(),
+		},
+	}
+}
+
+// devenvShellSpec: `devenv shell [FLAGS] -- CMD [ARGS]`. Without `--`, devenv
+// opens an interactive shell — fall through. Deliberately EXCLUDED:
+// --config-path (path arg, low value), --pretty-backtrace (cosmetic),
+// any subcommand-introducing forms.
+func devenvShellSpec() *commandSpec {
+	return &commandSpec{
+		Style: styleWrapper,
+		Flags: []flagSpec{
+			{Long: "impure"},
+			{Long: "clean"},
+			{Long: "offline"},
+			{Long: "verbose"}, {Short: "v"},
+			{Long: "quiet"}, {Short: "q"},
+			{Long: "nix-debugger"},
+		},
+		// No positionals before `--`: devenv shell takes none.
 	}
 }
 
