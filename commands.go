@@ -1141,6 +1141,20 @@ var safeCommands = map[string]*commandSpec{
 		AllowAnyPositional: true,
 	},
 
+	// === Tier E: scripting languages with whitelisted constructs ===========
+	// awk is allowed only when classifyAwkProgram approves the script body
+	// (no system/getline-pipe, no print redirects, no user functions). The
+	// `-f script.awk` form is NOT whitelisted — it would require classifying
+	// the loaded file's contents.
+	"awk": {
+		Style: styleAwk,
+		Flags: []flagSpec{
+			{Short: "F", TakesArg: true},
+			{Short: "v", TakesArg: true},
+		},
+		AllowAnyPositional: true,
+	},
+
 	// === Tier B: command-with-subcommand whitelists ======================
 
 	"git":        gitSpec(),

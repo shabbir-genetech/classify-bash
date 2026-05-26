@@ -108,6 +108,22 @@ Once the binary is on `$PATH`, add this to `~/.claude/settings.json`:
   tail after `--` is looked up in `safeCommands` and matched recursively, so
   the wrapped command's whitelist rules apply unchanged. Pre-`--` positionals
   are accepted iff `AllowAnyPositional` is true (used for `nix shell PKGS --`).
+- **`styleAwk`**: awk-shape command line `[flag…] PROGRAM [files…]` where the
+  script itself is classified by walking the goawk AST (`awk.go`). Allowed
+  pre-program flags are short-only and take values (`-F sep`, `-v var=val`);
+  the first non-flag positional is the awk program, parsed via
+  `github.com/benhoyt/goawk/parser` and accepted only when every node passes
+  the positive whitelist below. Trailing positionals are input files.
+  The `-f script.awk` script-load form, the `-e prog` multi-program form, and
+  gawk extensions (`-i`, `-l`, `--long-flags`) are deliberately not in v1.
+  Inside the awk program:
+    - `print`/`printf` with any redirection (`>`, `>>`, `|`) → reject
+    - `getline` from a pipe or a file → reject
+    - `system(...)` (and other builtins not on the allowlist: `close`,
+      `fflush`) → reject
+    - User-defined functions (definition or call) → reject
+    - Everything else (field/var refs, arithmetic, string ops, control flow,
+      `length`/`substr`/`sprintf`/`gsub`/`split`/...) → recurse and accept
 
 ### Deferred wrapper shapes
 

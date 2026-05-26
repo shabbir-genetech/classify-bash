@@ -21,6 +21,13 @@ const (
 	// safety is inherited rather than loosened. Used by `devenv shell --` and
 	// `nix shell PKGS --`.
 	styleWrapper
+	// styleAwk: awk-shape command line `[flag…] PROGRAM [files…]`. Pre-program
+	// flags are short-only (`-F sep`, `-v var=val`); all listed flags must take
+	// arguments. The first non-flag positional is the awk program source,
+	// classified by classifyAwkProgram (positive-whitelisted awk AST). Any
+	// remaining positionals are file paths, accepted as-is (literalWords has
+	// already rejected words with shell expansion). `--` ends flag parsing.
+	styleAwk
 )
 
 // flagSpec describes one allowed flag for a command.
@@ -84,6 +91,8 @@ func (s *commandSpec) match(args []string) bool {
 		return s.matchFind(args)
 	case styleWrapper:
 		return s.matchWrapper(args)
+	case styleAwk:
+		return s.matchAwk(args)
 	default:
 		failLoud("unknown flag style: %d", s.Style)
 		return false // unreachable
@@ -275,6 +284,67 @@ func (s *commandSpec) matchWrapper(args []string) bool {
 
 	// No `--` encountered: wrapper invoked without an explicit command.
 	return false
+}
+
+// matchAwk parses argv of the shape `[flag…] PROGRAM [files…]`. Pre-program
+// short flags from spec.Flags all take arguments (`-F sep`, `-v var=val`).
+// The first non-flag positional is the awk program, validated by
+// classifyAwkProgram. Long flags (`--name`) and short-without-arg flags
+// fall through — gawk extensions and the `-f file` script-load form are
+// deliberately out of scope for v1.
+func (s *commandSpec) matchAwk(args []string) bool {
+	i := 0
+	for i < len(args) {
+		arg := args[i]
+
+		// `--` ends flag parsing; first remaining arg is the program.
+		if arg == "--" {
+			return s.matchAwkProgramAndFiles(args[i+1:])
+		}
+
+		// Long flags not supported in v1.
+		if strings.HasPrefix(arg, "--") {
+			return false
+		}
+
+		// Short flag: must be one of the listed flags, must take an arg.
+		if strings.HasPrefix(arg, "-") && len(arg) > 1 {
+			letter := string(arg[1])
+			f, ok := s.findShort(letter)
+			if !ok {
+				return false
+			}
+			if !f.TakesArg {
+				return false
+			}
+			if len(arg) > 2 {
+				// `-Fsep` form — value attached to the flag token.
+				i++
+				continue
+			}
+			// `-F sep` form — value is the next argument.
+			if i+1 >= len(args) {
+				return false
+			}
+			i += 2
+			continue
+		}
+
+		// First non-flag positional: the awk program.
+		return s.matchAwkProgramAndFiles(args[i:])
+	}
+	// No program found.
+	return false
+}
+
+// matchAwkProgramAndFiles takes the tail starting at the awk program.
+// args[0] is the program source; args[1:] are input file paths. Files are
+// accepted as-is (literalWords already rejected anything with expansion).
+func (s *commandSpec) matchAwkProgramAndFiles(args []string) bool {
+	if len(args) == 0 {
+		return false
+	}
+	return classifyAwkProgram(args[0])
 }
 
 func (s *commandSpec) matchFind(args []string) bool {

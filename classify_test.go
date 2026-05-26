@@ -218,6 +218,28 @@ func TestMustAllow(t *testing.T) {
 		"nix shell --impure nixpkgs#hello -- ls",
 		// Composition: wrapper inside wrapper.
 		"devenv shell -- nix shell nixpkgs#ripgrep -- rg foo",
+
+		// Tier E — awk with whitelisted constructs only
+		"awk '{print}'",
+		"awk '{print $2}'",
+		"awk '{print $2, $11, $12}'",
+		"awk '/pattern/'",
+		"awk '/pattern/ {print}'",
+		"awk 'BEGIN {x=1} {print x, $1}'",
+		"awk 'END {print NR}'",
+		"awk -F: '{print $1}' /etc/passwd",
+		"awk -F : '{print $1}' /etc/passwd",
+		"awk -v n=5 '{if (NR<=n) print}'",
+		"awk -v sep=, -F: '{print $1 sep $2}'",
+		"awk '/x/ {gsub(/y/,\"z\"); print}'",
+		"awk '{for (i=1;i<=NF;i++) print $i}'",
+		"awk '{n=split($0,a,\",\"); for (i=1;i<=n;i++) print a[i]}'",
+		"awk '{s=substr($1,1,5); print toupper(s)}'",
+		"awk 'NR>1 {print $0}'",
+		"awk '$1 == \"foo\" {print $2}'",
+		// Awk inside pipelines (whole pipeline must classify).
+		"ps aux | awk '{print $2}' | head",
+		"git log --pretty=format:%H | awk 'NR<=10'",
 	}
 	for _, c := range cases {
 		if got := classifyCommand(c); got != decisionAllow {
@@ -248,8 +270,6 @@ func TestMustNotAllow(t *testing.T) {
 		"sed -i 's/x/y/' file",
 		"sed -n '1,10p' file",
 		"sed 's/a/b/' file",
-		"awk '{print}' file",
-		"awk '/x/ {print > \"out\"}' file",
 		"perl -pe 's/x/y/' file",
 		"perl -i -pe 's/x/y/' file",
 		"python -c 'print(1)'",
@@ -257,6 +277,30 @@ func TestMustNotAllow(t *testing.T) {
 		"node -e 'console.log(1)'",
 		"bash -c 'rm x'",
 		"sh -c 'echo hi'",
+
+		// awk with unsafe constructs in the script body
+		"awk '{print > \"out\"}'",
+		"awk '{print >> \"out\"}'",
+		"awk '/x/ {print > \"out\"}' file",
+		"awk '/x/ {print > \"/etc/hosts\"}'",
+		"awk '{printf \"%s\\n\", $1 > \"out\"}'",
+		"awk '{print | \"sh\"}'",
+		"awk '{print | \"cat > /tmp/x\"}'",
+		"awk '{system(\"id\")}'",
+		"awk 'BEGIN {system(\"rm -rf /\")}'",
+		"awk '{\"echo hi\" | getline x; print x}'",
+		"awk '{getline x < \"/etc/passwd\"; print x}'",
+		"awk '{fflush()}'",                          // F_FFLUSH not on allowlist
+		"awk '{close(\"foo\")}'",                    // F_CLOSE not on allowlist
+		"awk 'function foo() {print} {foo()}'",      // user-defined function
+		"awk 'function foo(x) {return x+1} {print foo($1)}'",
+		// awk CLI shapes outside the v1 whitelist
+		"awk -f script.awk",
+		"awk -f /tmp/x.awk input",
+		"awk -i include.awk '{print}'",              // gawk -i (include file)
+		"awk --field-separator=: '{print $1}'",      // long flags not in v1
+		"awk -e '{print}'",                          // multi-program form, deferred
+		"awk --unknown-flag '{print}'",
 
 		// tar — not whitelisted at all
 		"tar -tf archive.tar",

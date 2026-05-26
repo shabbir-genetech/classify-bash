@@ -23,7 +23,7 @@
         src = ./.;
         # Filled in after first build attempt. `nix build` will print the
         # correct hash on the initial failure; paste it here.
-        vendorHash = "sha256-AI5r/s5q8nX2tw5r3hnuQd/NYsijOJ0pM0JHcytkVdc=";
+        vendorHash = "sha256-DQS+zZEOz9aJfwZt6Fq5T7Hm1JQK6AJ3IqJqMzC27rU=";
         meta = {
           description = "Claude Code Bash classifier (strict read-only whitelist)";
           mainProgram = "classify-bash";
