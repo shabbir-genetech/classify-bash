@@ -489,6 +489,9 @@ func TestEventDecodeAccepts(t *testing.T) {
 		`{"session_id":"abc-uuid","transcript_path":"/path/to/transcript.jsonl","cwd":"/home/user/repo","permission_mode":"default","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"ls","description":"List files"},"tool_use_id":"toolu_xyz"}`,
 		// With Bash tool's optional timeout / run_in_background fields.
 		`{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"sleep 5","timeout":10000,"run_in_background":false}}`,
+		// Sub-agent Bash calls include an agent_id field; without this in the
+		// schema the strict decoder exits 2 on every sub-agent tool call.
+		`{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"ls"},"agent_id":"ad50092edde64eaef"}`,
 	}
 	for _, body := range cases {
 		ev, err := decodeEvent(strings.NewReader(body))

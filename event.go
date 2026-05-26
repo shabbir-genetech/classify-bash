@@ -28,6 +28,7 @@ type event struct {
 	CWD            json.RawMessage `json:"cwd"`
 	PermissionMode json.RawMessage `json:"permission_mode"`
 	ToolUseID      json.RawMessage `json:"tool_use_id"`
+	AgentID        json.RawMessage `json:"agent_id"`
 }
 
 // toolInput is the Bash tool's input shape. command is the only field we
