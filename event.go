@@ -29,6 +29,7 @@ type event struct {
 	PermissionMode json.RawMessage `json:"permission_mode"`
 	ToolUseID      json.RawMessage `json:"tool_use_id"`
 	AgentID        json.RawMessage `json:"agent_id"`
+	AgentType      json.RawMessage `json:"agent_type"`
 }
 
 // toolInput is the Bash tool's input shape. command is the only field we
