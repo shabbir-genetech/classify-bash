@@ -139,6 +139,9 @@ func TestMustAllow(t *testing.T) {
 		"git shortlog -s -n",
 		"git reflog show",
 		"git grep -n TODO",
+		"git -C /tmp status",
+		"git -C /home/user/myrepo log --oneline -- flake.nix",
+		"git -C/tmp status",
 
 		// Tier B — jj
 		"jj status",
@@ -364,8 +367,10 @@ func TestMustNotAllow(t *testing.T) {
 		"git worktree add ../wt",
 
 		// git-level flags not in v1
-		"git -C /tmp status",
 		"git --git-dir=/tmp/.git log",
+		"git -C",
+		"git -C /tmp",
+		"git -X /tmp status",
 
 		// jj subcommands outside whitelist
 		"jj new",

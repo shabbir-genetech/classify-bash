@@ -1334,10 +1334,14 @@ func gitSpec() *commandSpec {
 	//   reset, clean, gc, prune, repack, notes, submodule, bisect, cherry-pick,
 	//   revert, am, format-patch, apply, send-email, archive.
 	//
-	// All allowed subcommands here also disable top-level git flags (`git -C
-	// /tmp status` falls through). Add per-flag specs later if needed.
+	// Top-level git flags whitelisted here are limited to `-C <path>`. Other
+	// top-level flags (--git-dir=, --work-tree=, -c, -P, --no-pager, etc.)
+	// still fall through.
 	return &commandSpec{
 		Style: styleGNU,
+		Flags: []flagSpec{
+			{Short: "C", TakesArg: true},
+		},
 		Subcommands: map[string]*commandSpec{
 			"status":      gitStatusSpec(),
 			"log":         gitLogSpec(),
