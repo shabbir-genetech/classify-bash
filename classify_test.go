@@ -100,6 +100,12 @@ func TestMustAllow(t *testing.T) {
 		// Trivial
 		"echo hello",
 		"echo -n no newline",
+		// Tokens that look flag-shaped but aren't: a name can't start with `-`,
+		// so `---`, `----foo`, etc. are positionals (matches GNU getopt behavior).
+		`echo "---"`,
+		"echo ---",
+		"echo ----foo",
+		"echo a ---- b",
 		"printf '%s\\n' x",
 		"true",
 		"false",
@@ -195,6 +201,8 @@ func TestMustAllow(t *testing.T) {
 		"cat foo.txt | grep bar | wc -l",
 		"git log --oneline | head -20",
 		"ls -la | grep '^d'",
+		// Multi-stage `&&` chain with a literal dash-string separator.
+		`git -C /tmp log --oneline --all | wc -l && echo "---" && git -C /tmp log --oneline | head -50`,
 
 		// Redirect to /dev/null (no-op write)
 		"grep -q pattern file > /dev/null",

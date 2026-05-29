@@ -109,8 +109,11 @@ func (s *commandSpec) matchGNU(args []string) bool {
 			return s.handlePositionals(args[i+1:])
 		}
 
-		// Long flag: `--name` or `--name=value`.
-		if strings.HasPrefix(arg, "--") && len(arg) > 2 {
+		// Long flag: `--name` or `--name=value`. A long-flag name never starts
+		// with another `-`, so tokens like `---` or `----foo` are NOT flags —
+		// they fall through to positional handling. This matches how GNU getopt
+		// treats such tokens (e.g. `echo ---` prints `---`).
+		if strings.HasPrefix(arg, "--") && len(arg) > 2 && arg[2] != '-' {
 			name, val, hasVal := arg[2:], "", false
 			if eq := strings.IndexByte(name, '='); eq >= 0 {
 				val = name[eq+1:]
@@ -137,8 +140,10 @@ func (s *commandSpec) matchGNU(args []string) bool {
 			continue
 		}
 
-		// Short flag cluster: `-`, `-l`, `-la`, `-n5`, `-n` (with value next).
-		if strings.HasPrefix(arg, "-") && len(arg) > 1 {
+		// Short flag cluster: `-l`, `-la`, `-n5`, `-n` (with value next). A short
+		// flag's first character is never `-`, so `---` etc. fall through to
+		// positional handling alongside `---foo` from the long-flag branch.
+		if strings.HasPrefix(arg, "-") && len(arg) > 1 && arg[1] != '-' {
 			cluster := arg[1:]
 			consumedNext := false
 			for j := 0; j < len(cluster); j++ {
@@ -221,8 +226,9 @@ func (s *commandSpec) matchWrapper(args []string) bool {
 			return sub.match(tail[1:])
 		}
 
-		// Long flag: `--name` or `--name=value`.
-		if strings.HasPrefix(arg, "--") && len(arg) > 2 {
+		// Long flag: `--name` or `--name=value`. Same dash-prefix rule as
+		// matchGNU — `---foo` is data, not a flag.
+		if strings.HasPrefix(arg, "--") && len(arg) > 2 && arg[2] != '-' {
 			name, hasVal := arg[2:], false
 			if eq := strings.IndexByte(name, '='); eq >= 0 {
 				name = name[:eq]
@@ -246,8 +252,8 @@ func (s *commandSpec) matchWrapper(args []string) bool {
 			continue
 		}
 
-		// Short flag cluster.
-		if strings.HasPrefix(arg, "-") && len(arg) > 1 {
+		// Short flag cluster. Same dash-prefix rule as matchGNU.
+		if strings.HasPrefix(arg, "-") && len(arg) > 1 && arg[1] != '-' {
 			cluster := arg[1:]
 			consumedNext := false
 			for j := 0; j < len(cluster); j++ {
