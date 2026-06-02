@@ -2,10 +2,10 @@
   description = "Claude Code PreToolUse hook: auto-allow strictly-whitelisted read-only Bash commands";
 
   inputs = {
-    # Pin to nixos-25.11 so standalone `nix build` works. A consumer flake can override
+    # Pin to nixos-26.05 so standalone `nix build` works. A consumer flake can override
     # it via `inputs.classify-bash.inputs.nixpkgs.follows = "nixpkgs"`,
     # sharing a single nixpkgs evaluation.
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.11";
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
     flake-utils.url = "github:numtide/flake-utils";
   };
 
