@@ -66,7 +66,20 @@ func classifyCmd(cmd syntax.Command) bool {
 			return false
 		}
 		return classifyStmt(c.Y)
-	case *syntax.Subshell, *syntax.Block,
+	case *syntax.Subshell:
+		// ( … ) — recurse into the inner statements. Each must classify safe
+		// on its own; same rule as && / ||. Parens are just a scope boundary,
+		// not a bypass. The empty-Stmts guard mirrors classifyFile.
+		if len(c.Stmts) == 0 {
+			return false
+		}
+		for _, s := range c.Stmts {
+			if !classifyStmt(s) {
+				return false
+			}
+		}
+		return true
+	case *syntax.Block,
 		*syntax.IfClause, *syntax.ForClause, *syntax.WhileClause, *syntax.CaseClause,
 		*syntax.FuncDecl, *syntax.LetClause, *syntax.TimeClause, *syntax.CoprocClause,
 		*syntax.TestClause, *syntax.DeclClause, *syntax.ArithmCmd:

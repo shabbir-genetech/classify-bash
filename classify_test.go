@@ -251,6 +251,20 @@ func TestMustAllow(t *testing.T) {
 		// Awk inside pipelines (whole pipeline must classify).
 		"ps aux | awk '{print $2}' | head",
 		"git log --pretty=format:%H | awk 'NR<=10'",
+
+		// cd builtin — Tier A. Only effect is chdir on this shell invocation.
+		"cd /tmp",
+		"cd",
+		"cd /a /b", // bash itself errors on extras; classifier needn't enforce arity
+		"cd /tmp && jj status",
+		"cd /home/user && git log --oneline",
+
+		// Subshells — recurse into contained statements; same rule as && / ||.
+		"(jj status)",
+		"(jj status || git status)",
+		"(jj status 2>/dev/null || git status 2>/dev/null)",
+		"(cd /tmp && ls)", // was mustNotAllow before Subshell recursion + cd landed
+		"cd /home/user/project && (jj status 2>/dev/null || git status 2>/dev/null)",
 	}
 	for _, c := range cases {
 		if got := classifyCommand(c); got != decisionAllow {
@@ -455,9 +469,22 @@ func TestMustNotAllow(t *testing.T) {
 		"while read l; do echo $l; done",
 		"case $x in a) echo a;; esac",
 
-		// Subshell / block
-		"(cd /tmp && ls)",
+		// Brace block — { …; } stays rejected (Subshell now recurses, Block does not).
 		"{ ls; pwd; }",
+
+		// Subshell regression coverage: parens must NOT hide an unsafe command.
+		"(rm foo)",                  // single unsafe stmt in subshell
+		"(cd /tmp && rm foo)",       // unsafe chained after safe cd
+		"(jj status; rm foo)",       // safe + unsafe stmt sequence
+		"(jj status && touch bar)",  // safe && unsafe
+		"(jj status || rm foo)",     // safe || unsafe (Y side still must classify)
+
+		// cd: variable expansion blocked upstream; flags not whitelisted.
+		"cd $HOME",       // wordLiteral rejects ParamExp
+		`cd "$HOME"`,     // same — DblQuoted-with-ParamExp
+		"cd -P /tmp",     // -P not in cd's flag spec (nil)
+		"cd -L /tmp",     // -L not in cd's flag spec
+		"cd /tmp && rm foo", // safe cd, unsafe chain target
 
 		// Background
 		"sleep 60 &",

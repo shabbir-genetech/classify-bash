@@ -779,6 +779,15 @@ var safeCommands = map[string]*commandSpec{
 		},
 		AllowAnyPositional: true,
 	},
+	// cd is a bash builtin whose only effect is chdir(2) on this shell
+	// invocation; cwd dies with the process. No flags whitelisted — `cd -P`,
+	// `cd -L`, `cd -e`, `cd -@`, `cd -` all fall through. Variable expansion
+	// like `cd $HOME` is blocked upstream by wordLiteral.
+	"cd": {
+		Style:              styleGNU,
+		Flags:              nil,
+		AllowAnyPositional: true,
+	},
 	"basename": {
 		Style: styleGNU,
 		Flags: []flagSpec{
