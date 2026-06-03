@@ -41,6 +41,7 @@ type toolInput struct {
 	Description     json.RawMessage `json:"description"`
 	Timeout         json.RawMessage `json:"timeout"`
 	RunInBackground json.RawMessage `json:"run_in_background"`
+	Effort          json.RawMessage `json:"effort"`
 }
 
 // decodeEvent reads exactly one JSON event from r and validates it against
