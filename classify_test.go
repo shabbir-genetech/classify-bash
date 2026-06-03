@@ -577,6 +577,11 @@ func TestEventDecodeAccepts(t *testing.T) {
 		// field in tool_input (alongside description/timeout/run_in_background).
 		// Without it enumerated, the strict decoder exits 2 and blocks the call.
 		`{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"ls","effort":"high"}}`,
+		// With "effortLevel" set in settings.json, the harness also attaches a
+		// per-call effort field at the TOP LEVEL of the event (not just inside
+		// tool_input). Without it enumerated on `event`, the strict decoder
+		// exits 2 and blocks EVERY Bash call.
+		`{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"ls"},"effort":"high"}`,
 		// Sub-agent Bash calls include agent_id + agent_type fields; without
 		// these in the schema the strict decoder exits 2 on every sub-agent
 		// tool call.
