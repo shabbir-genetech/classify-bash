@@ -31,11 +31,17 @@ way to understand the whole thing:
   `wordLiteral`/`literalWords` reject any word with expansion (`$VAR`, `$(...)`,
   `<(...)`, …) — only fully-literal argv reaches a spec. `safeRedirect` allows
   reads and writes only to `/dev/null`.
-- **`spec.go`** — `commandSpec` + the four `flagStyle` matchers (`matchGNU`,
-  `matchFind`, `matchWrapper`, `matchAwk`). This is the flag/subcommand/positional
-  engine; the data it runs on lives in `commands.go`.
+- **`spec.go`** — `commandSpec` + the five `flagStyle` matchers (`matchGNU`,
+  `matchFind`, `matchWrapper`, `matchXargs`, `matchAwk`). This is the
+  flag/subcommand/positional engine; the data it runs on lives in `commands.go`.
+  `matchXargs` is the odd one out: no `--` separator (the first non-flag token is
+  the wrapped command) and it recurses via `classifyWrapped` into a curated
+  subset, not the full whitelist — see the privacy/safety note below and
+  DESIGN.md's "styleXargs and the stdin-argv hazard".
 - **`commands.go`** — the actual whitelist data: `safeCommands` maps each command
-  name to a `commandSpec`. This is where you add/extend allowed commands.
+  name to a `commandSpec`. This is where you add/extend allowed commands. It also
+  holds `xargsWrappable`, the curated subset `xargs` may wrap (a strict subset of
+  `safeCommands`; keep them in sync or `classifyWrapped` fails loud).
 - **`awk.go`** — `classifyAwkProgram` walks an awk program's AST (via the goawk
   fork) for `styleAwk`, positively whitelisting nodes/builtins.
 
@@ -71,6 +77,14 @@ The working copy is managed by **jujutsu (`jj`)** — there is a `.jj/` director
   before building.
 - The CRLF-repair loop in older notes (`git ls-files | sed …`) becomes
   `jj file list` instead of `git ls-files`.
+- The same auto-snapshot catches **build artifacts**: a `nix build` leaves a
+  `result` symlink into `/nix/store`, which jj will snapshot and try to commit if
+  it isn't ignored. `/result` is in `.gitignore` for exactly this reason — keep it
+  there, and check `jj st` before committing so a stray `A result` (or other
+  artifact) doesn't ride along.
+- To land a change on the remote: `jj commit -m "…"`, then move the bookmark with
+  `jj bookmark set master -r @-`, then `jj git push --bookmark master`. (No AI
+  attribution in the message; see Conventions.)
 
 (DESIGN.md's "Build gotcha" and PUBLIC-READINESS.md's leak gate now call out the
 jj-vs-git split explicitly; the published upstream is consumed as a `git+ssh`

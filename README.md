@@ -95,6 +95,15 @@ Once the binary is on `$PATH`, add this to `~/.claude/settings.json`:
    each known write-mode flag plus an `--unknown-flag` form.
 4. `nix flake check` must pass before the change can be trusted.
 
+To also make a command **wrappable by `xargs`**, add it to `xargsWrappable` in
+`commands.go` — but only if it clears a *stronger* bar than the whitelist itself:
+it must have **no write/mutate path under any argv at all** (because xargs
+appends stdin items to its argv that the classifier never sees). A command whose
+spec merely *excludes* a write flag (e.g. `sort`'s `-o`, `date`'s `-s`) does
+**not** qualify — stdin could supply that flag. Add a `mustAllow` `xargs <cmd> …`
+case and keep `xargsWrappable` a subset of `safeCommands`. See "Flag styles"
+(`styleXargs`) and DESIGN.md.
+
 ## Flag styles
 
 - **`styleGNU`** (default): standard `-x`/`--name`/`--name=value`/clustered

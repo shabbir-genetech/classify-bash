@@ -142,3 +142,8 @@ command, so it is enough to run any `jj` command (e.g. `jj status`) after creati
 the file, before building. (Upstream is consumed as a `git+ssh` flake input, so a
 git checkout would instead need `git add`; same underlying requirement, different
 tool.)
+
+The flip side of auto-snapshot: `nix build` drops a `result` symlink into the
+working copy, and jj will snapshot it too. `/result` is in `.gitignore` to keep
+it out of commits — check `jj st` before committing so a stray artifact doesn't
+ride along.
