@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Guidance for Claude Code when working in this repo.
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## What this is
 
@@ -12,18 +12,68 @@ It is an accelerator, never a gate — see [README.md](README.md) for the contra
 and [DESIGN.md](DESIGN.md) for the rationale (allow-only, positive whitelist,
 tiers A–E, AST handling, the goawk fork).
 
+## Architecture
+
+One event flows through a fixed pipeline; reading these in order is the fastest
+way to understand the whole thing:
+
+- **`main.go`** — entry point. Decode the event, classify the command, and on
+  `decisionAllow` print the fixed allow JSON (hand-written, no `encoding/json` on
+  the emit path). Everything else is silent exit 0. `failLoud` is the only path
+  to exit 2.
+- **`event.go`** — strict JSON decode (`DisallowUnknownFields`) of the PreToolUse
+  payload into `event`/`toolInput`. Only `command` is read; every other field is
+  enumerated as an ignored `json.RawMessage` so name-drift fails loud but
+  type-drift on ignored fields stays quiet.
+- **`classify.go`** — the shell-AST walk. `classifyCommand` parses with
+  `mvdan.cc/sh/v3/syntax`, then recurses: `&&`/`||`/pipe/`(subshell)` recurse,
+  every other compound kind is rejected, an unknown AST node calls `failLoud`.
+  `wordLiteral`/`literalWords` reject any word with expansion (`$VAR`, `$(...)`,
+  `<(...)`, …) — only fully-literal argv reaches a spec. `safeRedirect` allows
+  reads and writes only to `/dev/null`.
+- **`spec.go`** — `commandSpec` + the four `flagStyle` matchers (`matchGNU`,
+  `matchFind`, `matchWrapper`, `matchAwk`). This is the flag/subcommand/positional
+  engine; the data it runs on lives in `commands.go`.
+- **`commands.go`** — the actual whitelist data: `safeCommands` maps each command
+  name to a `commandSpec`. This is where you add/extend allowed commands.
+- **`awk.go`** — `classifyAwkProgram` walks an awk program's AST (via the goawk
+  fork) for `styleAwk`, positively whitelisting nodes/builtins.
+
+The safety argument is structural: the hook only ever *adds* an `allow`. A bug
+can at worst fail to accelerate; it can never wave through something the normal
+permission flow would have stopped. Preserve that asymmetry.
+
 ## Build / test
 
 ```bash
 nix develop          # dev shell: go, gopls, gotools, delve
 go test ./...        # the classifier corpus (TestMustAllow / TestMustNotAllow / TestEventDecode*)
+go test -run TestMustNotAllow ./...   # a single test function
 nix flake check      # runs that corpus as a flake check — MUST pass before trusting a change
 nix build            # build the binary as a Nix derivation -> ./result/bin/classify-bash
 ```
 
-A newly-created `.go` file must be `git add`-ed before `nix build` (Nix uses a
-git-aware source; an untracked file is invisible and the build fails
-`undefined: <symbol>`).
+The test corpus is the spec: `TestMustAllow` (forms that must classify allow),
+`TestMustNotAllow` (forms that must fall through), and `TestEventDecode*` (the
+JSON contract). Each case is a bare command string in a table — add to the table,
+don't write new test functions.
+
+## Version control: this is a jj repo, not git
+
+The working copy is managed by **jujutsu (`jj`)** — there is a `.jj/` directory and
+**no `.git/`**. `git` commands will not work here. Equivalents:
+
+- jj auto-snapshots the working copy on every `jj` command, so a newly-created
+  `.go` file is tracked as soon as you run any `jj` command (or `jj status`) — no
+  explicit `add` step. This matters because **`nix build`/`nix flake check` use a
+  VCS-aware source: an unsnapshotted new file is invisible and the build fails
+  `undefined: <symbol>`.** Run a `jj` command (or `jj st`) after creating a file,
+  before building.
+- The CRLF-repair loop in older notes (`git ls-files | sed …`) becomes
+  `jj file list` instead of `git ls-files`.
+
+(README.md/DESIGN.md still phrase these as `git add`/`git ls-files`; the published
+upstream is consumed as a `git+ssh` flake input, but local dev here is jj.)
 
 ## Conventions
 
@@ -36,9 +86,11 @@ git-aware source; an untracked file is invisible and the build fails
   decoding exits 2 and BLOCKS the call. Fix: add the field as an ignored
   `json.RawMessage` on the right struct (`event` for top-level, `toolInput` for
   a `tool_input` field) + an accept-test. See DESIGN.md.
+- **Fail loud on the unknown**: an unrecognized `mvdan/sh` AST node, redirect op,
+  or flag style calls `failLoud` (exit 2) rather than guessing — we'd rather block
+  than ship a stale classifier. Keep new `switch` defaults loud.
 - **LF line endings** enforced via `.gitattributes` (`*.go`/`*.nix`/`*.md`). CRLF
-  breaks the inline shell in `flake.nix`'s checks. If a working copy ever shows
-  CRLF: `for f in $(git ls-files); do sed -i 's/\r$//' "$f"; done`.
+  breaks the inline shell in `flake.nix`'s checks.
 - No AI attribution in commit messages.
 
 ## Privacy invariant
