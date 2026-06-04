@@ -2,6 +2,8 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+Committed working preferences and learnings live in @.claude/memory.md.
+
 ## What this is
 
 `classify-bash` is a Claude Code **PreToolUse hook for the `Bash` tool**. It reads
@@ -10,7 +12,7 @@ permission decision **only** when the command matches a strict read-only
 whitelist; anything else falls through silently to the normal permission prompt.
 It is an accelerator, never a gate — see [README.md](README.md) for the contract
 and [DESIGN.md](DESIGN.md) for the rationale (allow-only, positive whitelist,
-tiers A–E, AST handling, the goawk fork).
+tiers A–F, AST handling, the goawk fork).
 
 ## Architecture
 
