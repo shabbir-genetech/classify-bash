@@ -524,6 +524,20 @@ var safeCommands = map[string]*commandSpec{
 		AllowAnyPositional: true,
 	},
 
+	// paste: merge lines from files/stdin side by side. stdin/files -> stdout.
+	// No write flags (paste has no output-file option).
+	"paste": {
+		Style: styleGNU,
+		Flags: []flagSpec{
+			{Short: "d", Long: "delimiters", TakesArg: true},
+			{Short: "s", Long: "serial"},
+			{Short: "z", Long: "zero-terminated"},
+			{Long: "help"},
+			{Long: "version"},
+		},
+		AllowAnyPositional: true,
+	},
+
 	// column: format columns. stdout only.
 	"column": {
 		Style: styleGNU,
