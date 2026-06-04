@@ -94,6 +94,14 @@ design:
 
 ## Build gotcha
 
-`nix build` uses a git-aware source, so a newly-created `.go` file must be
-`git add`-ed before building — otherwise the build fails with errors like
-`undefined: classifyAwkProgram` because Nix never saw the untracked file.
+`nix build` / `nix flake check` use a VCS-aware source, so a newly-created `.go`
+file must be **snapshotted by the VCS** before building — otherwise the build
+fails with errors like `undefined: classifyAwkProgram` because Nix never saw the
+file.
+
+The local working copy is **jujutsu (`jj`)** — there is a `.jj/` and no `.git/`,
+so `git add` does not apply. jj auto-snapshots the working copy on every `jj`
+command, so it is enough to run any `jj` command (e.g. `jj status`) after creating
+the file, before building. (Upstream is consumed as a `git+ssh` flake input, so a
+git checkout would instead need `git add`; same underlying requirement, different
+tool.)

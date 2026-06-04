@@ -72,8 +72,9 @@ The working copy is managed by **jujutsu (`jj`)** — there is a `.jj/` director
 - The CRLF-repair loop in older notes (`git ls-files | sed …`) becomes
   `jj file list` instead of `git ls-files`.
 
-(README.md/DESIGN.md still phrase these as `git add`/`git ls-files`; the published
-upstream is consumed as a `git+ssh` flake input, but local dev here is jj.)
+(DESIGN.md's "Build gotcha" and PUBLIC-READINESS.md's leak gate now call out the
+jj-vs-git split explicitly; the published upstream is consumed as a `git+ssh`
+flake input, but local dev here is jj.)
 
 ## Conventions
 

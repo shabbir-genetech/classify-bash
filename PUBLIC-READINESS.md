@@ -25,6 +25,13 @@ exactly what you are about to publish. Fill the `<…>` placeholders in at the s
 **from a private note** — they are deliberately not written into this file so the
 file itself carries none of the tokens it guards against.
 
+> **Note on VCS.** The local working copy is **jujutsu (`jj`)**, which has no
+> `.git/`, so the `git` commands below will not run against it directly. Run the
+> gate against the actual git repository you are about to publish — either the
+> `git+ssh` upstream, a colocated checkout (`jj git init --colocate` in a fresh
+> clone), or `jj git export` first. The published artifact is git, so the gate
+> must be verified in git form regardless.
+
 ```bash
 # (1) no real home paths / internal project names anywhere in history.
 #     <internal-path-tokens> = e.g. your real $HOME basename, internal project slugs.
