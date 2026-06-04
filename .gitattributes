@@ -1,0 +1,8 @@
+# Force LF so multi-line shell in writeShellApplication / Nix strings and Go
+# source never get CRLF (which breaks bash heredocs and shell scripts).
+*.go   text eol=lf
+*.nix  text eol=lf
+*.md   text eol=lf
+*.sum  text eol=lf
+*.mod  text eol=lf
+.gitattributes text eol=lf

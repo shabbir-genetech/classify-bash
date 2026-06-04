@@ -93,8 +93,7 @@ Once the binary is on `$PATH`, add this to `~/.claude/settings.json`:
    future reviewers see that they were considered.
 3. Add `mustAllow` cases for the new safe forms and `mustNotAllow` cases for
    each known write-mode flag plus an `--unknown-flag` form.
-4. `nix flake check` must pass before the change can
-   be trusted.
+4. `nix flake check` must pass before the change can be trusted.
 
 ## Flag styles
 
