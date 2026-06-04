@@ -1198,6 +1198,76 @@ var safeCommands = map[string]*commandSpec{
 	// fall through. See styleWrapper in spec.go.
 
 	"devenv": devenvSpec(),
+
+	// === Tier F: stdin-append wrapper ====================================
+	// xargs runs `CMD [INITIAL-ARGS] <stdin-items>`. There is no `--` separator
+	// (the first non-flag token is the command), and stdin items are appended to
+	// the wrapped argv where we can't see them. Recursion is therefore gated by
+	// the curated xargsWrappable set below, not the full whitelist. See
+	// styleXargs / matchXargs in spec.go.
+
+	"xargs": xargsSpec(),
+}
+
+// xargsWrappable is the curated set of commands xargs may wrap. Membership rule:
+// a command belongs here ONLY if it has NO write/mutate path under ANY argv,
+// because xargs appends stdin tokens to the wrapped command's argv that we cannot
+// see at classify time — those tokens are parsed by the wrapped program,
+// including as flags. So `sort` (-o writes), `date` (-s sets the clock), `uniq`
+// (IN OUT positional), `jq` (-i), `env` (runs a command), and every
+// subcommand/exec command (`git`, `jj`, `nix`, `docker`, `systemctl`, `find`,
+// `awk`, `devenv`) are deliberately excluded even though they are in
+// safeCommands: stdin could inject the write. Keys here MUST be a subset of
+// safeCommands (classifyWrapped fails loud otherwise).
+//
+// v1 is the "minimal core" — the commands one actually pipes into xargs. Extend
+// deliberately, applying the rule above and adding mustAllow tests.
+var xargsWrappable = map[string]bool{
+	"cat":       true,
+	"tac":       true,
+	"nl":        true,
+	"head":      true,
+	"tail":      true,
+	"wc":        true,
+	"grep":      true,
+	"egrep":     true,
+	"fgrep":     true,
+	"rg":        true,
+	"stat":      true,
+	"file":      true,
+	"cut":       true,
+	"md5sum":    true,
+	"sha1sum":   true,
+	"sha224sum": true,
+	"sha256sum": true,
+	"sha384sum": true,
+	"sha512sum": true,
+	"b2sum":     true,
+	"cksum":     true,
+}
+
+// xargsSpec is the styleXargs spec for xargs. Flags here are the read-safe
+// "common subset"; the replace-mode flags -I/-i/--replace are deliberately NOT
+// whitelisted (they enable insertion patterns like `xargs -I{} sh -c '… {}'`),
+// so they fall through as unknown flags. The wrapped command and its safety come
+// entirely from xargsWrappable + recursive classification in matchXargs.
+func xargsSpec() *commandSpec {
+	return &commandSpec{
+		Style: styleXargs,
+		Flags: []flagSpec{
+			{Short: "0", Long: "null"},
+			{Short: "n", Long: "max-args", TakesArg: true},
+			{Short: "P", Long: "max-procs", TakesArg: true},
+			{Short: "r", Long: "no-run-if-empty"},
+			{Short: "t", Long: "verbose"},
+			{Short: "x", Long: "exit"},
+			{Long: "help"},
+			{Long: "version"},
+			// NOT whitelisted (insertion/exec patterns): -I, -i, --replace.
+			// Out of scope for v1 (the "broad" set): -a/--arg-file, -d/--delimiter,
+			// -s/--max-chars, -L/--max-lines, -E, -p/--interactive.
+		},
+	}
 }
 
 func grepSpec() *commandSpec {

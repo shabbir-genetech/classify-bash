@@ -28,6 +28,14 @@ const (
 	// remaining positionals are file paths, accepted as-is (literalWords has
 	// already rejected words with shell expansion). `--` ends flag parsing.
 	styleAwk
+	// styleXargs: stdin-append wrapper `xargs [flag…] CMD [INITIAL-ARG…]`. Unlike
+	// styleWrapper there is NO `--` separator — the first non-flag token is the
+	// wrapped command, and the rest are fixed initial-arguments. The wrapped
+	// command is looked up in a CURATED subset (xargsWrappable), not the full
+	// safeCommands, because xargs appends stdin tokens to the wrapped argv that
+	// we cannot see at classify time; only commands with no write path under ANY
+	// argv are safe to wrap. See matchXargs and DESIGN.md.
+	styleXargs
 )
 
 // flagSpec describes one allowed flag for a command.
@@ -91,6 +99,8 @@ func (s *commandSpec) match(args []string) bool {
 		return s.matchFind(args)
 	case styleWrapper:
 		return s.matchWrapper(args)
+	case styleXargs:
+		return s.matchXargs(args)
 	case styleAwk:
 		return s.matchAwk(args)
 	default:
@@ -290,6 +300,112 @@ func (s *commandSpec) matchWrapper(args []string) bool {
 
 	// No `--` encountered: wrapper invoked without an explicit command.
 	return false
+}
+
+// matchXargs accepts argv of the shape `[flag…] CMD [INITIAL-ARG…]`. xargs's own
+// flags (spec.Flags, GNU style) are parsed until the first non-flag token, which
+// is the wrapped command name; the remainder are fixed initial-arguments. The
+// command is looked up in xargsWrappable — a curated subset of safeCommands — and
+// its initial-arguments classified recursively.
+//
+// The curated subset (not the full whitelist) is load-bearing: xargs appends
+// stdin tokens to the wrapped argv, and those tokens are invisible here and are
+// parsed by the wrapped program (including as flags). Recursing into a command
+// that has any write path under some argv (e.g. `sort -o`, `git push`) would let
+// stdin inject that path — a write the direct form would have prompted on. Only
+// commands with no write path under ANY argv belong in xargsWrappable. The
+// replace-mode flags `-I`/`-i`/`--replace` are deliberately absent from
+// xargsSpec, so they fall through here as unknown flags.
+func (s *commandSpec) matchXargs(args []string) bool {
+	i := 0
+	for i < len(args) {
+		arg := args[i]
+
+		// `--` ends xargs flag parsing; the next token is the wrapped command.
+		if arg == "--" {
+			return s.classifyWrapped(args[i+1:])
+		}
+
+		// Long flag: `--name` or `--name=value`. Same dash-prefix rule as matchGNU.
+		if strings.HasPrefix(arg, "--") && len(arg) > 2 && arg[2] != '-' {
+			name, hasVal := arg[2:], false
+			if eq := strings.IndexByte(name, '='); eq >= 0 {
+				name = name[:eq]
+				hasVal = true
+			}
+			f, ok := s.findLong(name)
+			if !ok {
+				return false
+			}
+			if hasVal {
+				if !f.TakesArg && !f.OptionalArg {
+					return false
+				}
+			} else if f.TakesArg {
+				if i+1 >= len(args) {
+					return false
+				}
+				i++
+			}
+			i++
+			continue
+		}
+
+		// Short flag cluster. Same dash-prefix rule as matchGNU.
+		if strings.HasPrefix(arg, "-") && len(arg) > 1 && arg[1] != '-' {
+			cluster := arg[1:]
+			consumedNext := false
+			for j := 0; j < len(cluster); j++ {
+				letter := string(cluster[j])
+				f, ok := s.findShort(letter)
+				if !ok {
+					return false
+				}
+				if f.TakesArg {
+					if j+1 < len(cluster) {
+						// rest of cluster is the value
+					} else {
+						if i+1 >= len(args) {
+							return false
+						}
+						consumedNext = true
+					}
+					break
+				}
+			}
+			i++
+			if consumedNext {
+				i++
+			}
+			continue
+		}
+
+		// First non-flag token: the wrapped command.
+		return s.classifyWrapped(args[i:])
+	}
+
+	// No wrapped command (bare `xargs`, or flags only). Bare xargs defaults to
+	// running /bin/echo on stdin items; require an explicit command instead.
+	return false
+}
+
+// classifyWrapped looks up tail[0] in the curated xargsWrappable set and, if
+// present, recursively classifies the fixed initial-arguments tail[1:].
+func (s *commandSpec) classifyWrapped(tail []string) bool {
+	if len(tail) == 0 {
+		return false
+	}
+	if !xargsWrappable[tail[0]] {
+		return false
+	}
+	sub, ok := safeCommands[tail[0]]
+	if !ok {
+		// xargsWrappable keys are a subset of safeCommands; a miss means the two
+		// have drifted out of sync. Be loud rather than silently mis-handle.
+		failLoud("xargsWrappable command %q absent from safeCommands", tail[0])
+		return false // unreachable
+	}
+	return sub.match(tail[1:])
 }
 
 // matchAwk parses argv of the shape `[flag…] PROGRAM [files…]`. Pre-program

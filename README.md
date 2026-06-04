@@ -107,6 +107,15 @@ Once the binary is on `$PATH`, add this to `~/.claude/settings.json`:
   tail after `--` is looked up in `safeCommands` and matched recursively, so
   the wrapped command's whitelist rules apply unchanged. Pre-`--` positionals
   are accepted iff `AllowAnyPositional` is true (used for `nix shell PKGS --`).
+- **`styleXargs`**: stdin-append wrapper `xargs [flag…] CMD [INITIAL-ARG…]`.
+  Unlike `styleWrapper` there is **no `--` separator** — the first non-flag token
+  is the wrapped command. The command is looked up in a **curated subset**
+  (`xargsWrappable` in `commands.go`), not the full whitelist, and its
+  initial-arguments are matched recursively. The subset matters because xargs
+  appends stdin items to the wrapped argv that we never see, so only commands
+  with no write path under *any* argv are wrappable (see "Flag styles" rationale
+  in DESIGN.md). The replace-mode flags `-I`/`-i`/`--replace` are not
+  whitelisted, so `xargs -I{} sh -c …` falls through.
 - **`styleAwk`**: awk-shape command line `[flag…] PROGRAM [files…]` where the
   script itself is classified by walking the goawk AST (`awk.go`). Allowed
   pre-program flags are short-only and take values (`-F sep`, `-v var=val`);
@@ -130,7 +139,9 @@ These are useful but each needs its own style/handling — bundling them with v1
 would obscure the design.
 
 - **Flag-introduced** (`nix develop -c CMD`, `xargs -I{} CMD …`) — needs a
-  `WrapFlag` variant naming which flag introduces the wrapped command.
+  `WrapFlag` variant naming which flag introduces the wrapped command. (Plain
+  `xargs CMD` is handled by `styleXargs`; only the replace-mode `-I{}` form,
+  which inserts the stdin item mid-argv, remains deferred.)
 - **Inline** (`env VAR=val CMD`, `nice CMD`, `nice -n 10 CMD`) — first
   non-flag positional starts the wrapped command, no `--` required.
 - **AST-level** (`time CMD`) — bash parses `time` as `TimeClause`, currently

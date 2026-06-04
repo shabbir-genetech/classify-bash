@@ -233,6 +233,20 @@ func TestMustAllow(t *testing.T) {
 		// Composition: wrapper inside wrapper.
 		"devenv shell -- nix shell nixpkgs#ripgrep -- rg foo",
 
+		// Tier F — xargs wrapping a curated read-only command
+		"xargs wc -l",
+		"git ls-files | xargs wc -l",
+		"xargs cat",
+		"xargs md5sum",
+		"xargs grep -n pattern",
+		"xargs -0 wc -l",
+		"xargs -n1 stat",
+		"xargs -r -t head -n5",
+		"xargs wc -l 2>/dev/null",
+		"xargs -- wc -l", // explicit end-of-flags before the command
+		// The full motivating pipeline.
+		"git ls-files 'app/**/*.php' | xargs wc -l 2>/dev/null | sort -rn | head -15",
+
 		// Tier E — awk with whitelisted constructs only
 		"awk '{print}'",
 		"awk '{print $2}'",
@@ -335,14 +349,25 @@ func TestMustNotAllow(t *testing.T) {
 		"tar -xf archive.tar",
 		"tar -czf out.tar src/",
 
-		// curl / wget / xargs / tee / dd — not whitelisted
+		// curl / wget / tee / dd — not whitelisted
 		"curl https://example.com",
 		"curl -fsSL https://example.com",
 		"wget https://example.com",
-		"xargs rm",
-		"xargs -I{} echo {}",
 		"echo hi | tee /etc/hosts",
 		"ls | tee output.txt",
+
+		// xargs: command not in the curated wrappable set, or unsafe form.
+		"xargs rm",              // rm not whitelisted at all
+		"xargs -I{} echo {}",    // replace-mode flag not whitelisted
+		"xargs",                 // no wrapped command (bare xargs → /bin/echo)
+		"xargs sort",            // sort has -o write flag → not wrappable (stdin could inject -o)
+		"xargs git",            // git push reachable via stdin → not wrappable
+		"xargs date",            // date -s sets the clock via stdin → not wrappable
+		"xargs jq .",            // jq -i in-place via stdin → not wrappable
+		"xargs ls",              // ls excluded from minimal core for v1
+		"xargs --replace wc -l", // replace-mode long form not whitelisted
+		"xargs --max-procs",     // value-taking flag missing its value
+		"xargs cat > out.txt",   // redirect write caught structurally
 
 		// Whitelisted command + unknown flag → fall through
 		"cat --futurewriteflag foo",

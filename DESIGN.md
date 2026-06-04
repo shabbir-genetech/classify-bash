@@ -32,6 +32,10 @@ allow-except-list would wave it through. A positive list fails closed instead.
   `styleWrapper`. The literal `--` is REQUIRED; the tail after it is looked up in
   the whitelist and classified recursively.
 - **E — scripting with a whitelisted body** (`awk`): `styleAwk` — see below.
+- **F — stdin-append wrapper** (`xargs`): `styleXargs`. Distinct from D — there
+  is no `--`, the first non-flag token is the wrapped command, and recursion is
+  gated by a *curated subset* of the whitelist (`xargsWrappable`), not the whole
+  thing. See below for why.
 
 ## Defensive JSON contract
 
@@ -80,13 +84,46 @@ directive in `go.mod`) adds an `ast/` package that re-exports those types; that
 is the *only* reason for the fork. See [PUBLIC-READINESS.md](PUBLIC-READINESS.md)
 for what to do about that fork before making this repo public.
 
+## `styleXargs` and the stdin-argv hazard
+
+`xargs CMD [INITIAL-ARGS]` runs `CMD INITIAL-ARGS <stdin-items>`. It looks like
+another transparent wrapper, but it is *not* safe to treat like `styleWrapper`,
+for one reason: **the stdin items become argv on the wrapped command, and we
+never see them.** The wrapped program parses those tokens itself — including any
+that look like flags.
+
+That breaks the allow-only invariant if we recurse into the full whitelist. `sort`
+is whitelisted but its write flag `-o` is not, so `sort -o /tmp/x` falls through
+to a prompt today. Yet `printf '\-o\n/tmp/x\n' | xargs sort` would classify `sort`
+with *no* fixed args — allowed — and then stdin injects `-o /tmp/x`, a write we
+just waved through. The same hole exists for `xargs git` (stdin → `push`),
+`xargs date` (→ `-s`, set the clock), `xargs uniq` (the `IN OUT` positional
+write), `xargs jq` (`-i`), and `xargs env` (runs an arbitrary command).
+
+So `styleXargs` recurses into a **curated subset**, `xargsWrappable`, whose
+membership rule is strictly stronger than "is read-only with these args": a
+command qualifies only if it has **no write/mutate path under any argv at all**,
+because stdin can supply any argv. The v1 set is the minimal core one actually
+pipes into xargs — `cat`, `head`, `tail`, `wc`, `grep`, `rg`, `stat`, `file`,
+`cut`, the `*sum`/`cksum` hashers. Every subcommand/exec command (`git`, `jj`,
+`nix`, `docker`, `systemctl`, `find`, `awk`, `devenv`) and every command with an
+excluded write flag (`sort`, `date`, `uniq`, `jq`, `env`, `hostname`, `ls` is
+simply deferred) stays out, even though they are in `safeCommands`. The
+replace-mode flags `-I`/`-i`/`--replace` are not whitelisted on `xargs` itself,
+so `xargs -I{} sh -c '… {}'` falls through as an unknown flag. `xargsWrappable`
+keys must stay a subset of `safeCommands`; a drift makes `classifyWrapped` fail
+loud.
+
 ## Deferred wrapper shapes
 
 Useful but each needs its own handling; bundling them into v1 would obscure the
 design:
 
 - **Flag-introduced** (`nix develop -c CMD`, `xargs -I{} CMD …`) — needs a
-  `WrapFlag` variant naming which flag introduces the wrapped command.
+  `WrapFlag` variant naming which flag introduces the wrapped command. (Plain
+  `xargs CMD` is handled by `styleXargs` above; only the replace-mode `-I{}`
+  form, which splices the stdin item into the middle of the argv, stays
+  deferred.)
 - **Inline** (`env VAR=val CMD`, `nice CMD`) — first non-flag positional starts
   the wrapped command, no `--` required.
 - **AST-level** (`time CMD`) — bash parses `time` as `TimeClause`, currently
