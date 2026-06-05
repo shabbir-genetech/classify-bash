@@ -21,3 +21,15 @@ README.md — this file is for how we work, not what the code is.)
 - No AI attribution in commit messages (also in CLAUDE.md "Conventions"). See the
   CLAUDE.md "Version control" section for the jj-vs-git gotchas (auto-snapshot,
   the `result` symlink, `/result` in `.gitignore`).
+
+## Maintaining this file
+
+- This file is the **committed** project memory. `CLAUDE.md` pulls it in with
+  `@.claude/memory.md`, so it loads every session and travels with the repo —
+  edit it here and commit to change a shared convention.
+- Claude Code's per-user store (`~/.claude/projects/<repo>/memory/`) is **local
+  and never committed**. Don't duplicate committed facts there; that store's
+  `MEMORY.md` is just a pointer back to this file. Use it only for things that
+  should stay personal/uncommitted.
+- Keep entries short and factual, and prefer linking to the authoritative section
+  (CLAUDE.md / DESIGN.md / README.md) over restating it.
