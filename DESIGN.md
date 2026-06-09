@@ -2,7 +2,9 @@
 
 Deeper rationale behind `classify-bash`. The [README](README.md) covers the
 contract and how to run it; this file records *why* the classifier is shaped the
-way it is, for anyone extending it.
+way it is, for anyone extending it. Agreed-but-unbuilt ideas (command
+substitution, `--` leniency, `while`, a `sed` parser) live in
+[FUTURE-WORK.md](FUTURE-WORK.md) with their caveats and open research.
 
 ## Why allow-only, never deny
 
