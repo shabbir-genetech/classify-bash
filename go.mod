@@ -1,4 +1,4 @@
-module classify-bash
+module github.com/shabbir-genetech/classify-bash
 
 go 1.22
 

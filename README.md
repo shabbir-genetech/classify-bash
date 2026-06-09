@@ -90,17 +90,21 @@ nix flake check
 It is a plain Go module — no Nix required to build or install:
 
 ```bash
+# Install the latest published version straight onto $PATH:
+go install github.com/shabbir-genetech/classify-bash@latest
+
+# Or from a checkout:
 go build -o classify-bash .   # or: go install .
 go test ./...
 ```
 
 Put the resulting binary on `$PATH` and register it the same way (see
-[Registration](#registration)). Two caveats:
+[Registration](#registration)). Two notes:
 
 - **The goawk dependency is a `replace`-pinned fork** (it re-exports goawk AST
-  types `styleAwk` needs). `go build` must be able to resolve it; if that fork is
-  not public you need git credentials / `GOPRIVATE`. See
-  [PUBLIC-READINESS.md](PUBLIC-READINESS.md).
+  types `styleAwk` needs). The fork is **public**
+  (`github.com/shabbir-genetech/goawk`), so `go build`/`go install` resolves it via
+  the module proxy with no extra setup.
 - **Platform support: Linux and macOS.** Windows/Plan9 build too, but the
   **journal** sink is unavailable there (it uses `log/syslog`, which those
   platforms lack), so `--log-to=journal` is a no-op and `--log-to=auto` always

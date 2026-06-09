@@ -4,19 +4,17 @@ This repo was extracted from a private parent repository with its history
 **scrubbed** so it could be made public safely. It is currently **private**.
 Run through this checklist **before** flipping it to public.
 
-## 1. Resolve the private goawk fork (hard blocker)
+## 1. goawk fork — RESOLVED
 
-`go.mod` pins a private fork via a `replace` directive so `styleAwk` can walk the
-goawk AST (it re-exports goawk's `internal/ast` types — see
-[DESIGN.md](DESIGN.md)). A public build must be able to resolve that dependency,
-and the fork's owner handle would otherwise become public. Pick one:
+`go.mod` pins a goawk fork via a `replace` directive so `styleAwk` can walk the
+goawk AST (it re-exports goawk's `internal/ast` types — see [DESIGN.md](DESIGN.md)).
 
-- **Vendor it** — `go mod vendor` and commit `vendor/`, so there is no external
-  dependency to fetch. (The `replace` directive still names the fork's path; pair
-  with one of the options below if the handle itself must not appear.)
-- **Publish the fork** under a neutral/public account and point `replace` at that.
-- **Upstream the re-export** to goawk so the `replace` directive can be dropped
-  entirely — the cleanest end state.
+This is no longer a blocker: the fork is **public** at
+`github.com/shabbir-genetech/goawk`, so a public `go build` resolves it via the
+module proxy, and the owner handle is the same account this repo publishes under —
+it is the project's public identity, not a secret. The `replace` directive can stay
+as-is. (Optional future cleanup: upstream the `ast/` re-export to goawk and drop the
+`replace` entirely — nice-to-have, not required.)
 
 ## 2. Re-run the leak gate (must be clean)
 
@@ -38,26 +36,33 @@ file itself carries none of the tokens it guards against.
 git log -p | grep -niE '<internal-path-tokens>' && echo "PATH LEAK"
 # (2) no internal email prefixes / domains / org names anywhere.
 #     <internal-id-tokens> = e.g. work email local-part, company domain, org slugs.
+#     NOTE: the `shabbir-genetech` GitHub handle is NOT a token to scrub — it is the
+#     public publishing account. Guard the *other* internal ids (work email, etc.).
 git log -p | grep -niE '<internal-id-tokens>' && echo "ID LEAK"
-# (3) the goawk-fork owner handle appears ONLY where mechanically required
-#     (go.mod / go.sum), and NOWHERE once step 1 removes the private fork:
-git rev-list --all | while read c; do
-  git grep -nI -e '<fork-owner-handle>' "$c" -- . ':!go.mod' ':!go.sum'
-done | grep . && echo "HANDLE LEAK"
-# (4) author identity is a safe placeholder, not a real name/email:
+# (3) author identity is a safe placeholder, not a real name/email:
 git log --format='%an <%ae>' | sort -u   # expect only the placeholder identity
 ```
 
-Any hit is a deal-breaker — stop and re-scrub (`git filter-repo --replace-text` /
-`--replace-message`) before publishing.
+The fork-owner-handle check is retired: the handle is now the public publishing
+identity (see section 1), so it is no longer a secret to scan for. Any hit on (1)
+or (2), or an unexpected author in (3), is a deal-breaker — stop and re-scrub
+(`git filter-repo --replace-text` / `--replace-message`) before publishing.
+
+A spot-check from the jj working copy (not a substitute for the full git-clone
+pass): author identity is the demo placeholder across all commits, and
+`genetech`/`shabbir` appear nowhere outside the `go.mod` replace pin.
 
 ## 3. Final review
 
+- **`LICENSE` — done:** MIT, copyright `shabbir-genetech` (adjust the holder to a
+  legal name/entity if you prefer).
+- **Module path — done:** `go.mod` is `github.com/shabbir-genetech/classify-bash`,
+  so `go install github.com/shabbir-genetech/classify-bash@latest` works once the
+  repo is public.
 - Skim `git log --oneline` for any commit subject/body that reveals private
-  context.
-- Confirm `README.md`, `DESIGN.md`, and this file contain no internal handles,
-  hostnames, or paths.
-- Decide on a `LICENSE`.
+  context. (Spot-checked clean from the jj copy — all subjects are generic.)
+- Confirm `README.md`, `DESIGN.md`, and this file contain no internal hostnames or
+  paths (the `shabbir-genetech` handle is fine — it is the publishing account).
 
 **Note — opt-in logging writes literal commands.** This is not a repo-content
 leak, but a deployment one: with `--log` enabled, the hook records every
