@@ -21,6 +21,11 @@
         pname = "classify-bash";
         version = "0.1.0";
         src = ./.;
+        # Pure-Go, static build. log/syslog (the journal sink) imports net, which
+        # would otherwise pull in cgo and require a C compiler the hermetic build
+        # has no reason to carry. Unix-socket dialing needs no DNS resolver, so
+        # CGO=0 builds and runs fine.
+        env.CGO_ENABLED = "0";
         # Filled in after first build attempt. `nix build` will print the
         # correct hash on the initial failure; paste it here.
         vendorHash = "sha256-DQS+zZEOz9aJfwZt6Fq5T7Hm1JQK6AJ3IqJqMzC27rU=";
@@ -49,6 +54,9 @@
         export HOME=$TMPDIR
         export GOCACHE=$TMPDIR/go-cache
         export GOFLAGS=-mod=vendor
+        # Match the package build: pure-Go, no C compiler needed (log/syslog -> net
+        # would otherwise trip cgo). See the env.CGO_ENABLED note above.
+        export CGO_ENABLED=0
         # buildGoModule's goModules output IS the vendor directory.
         cp -r ${classify-bash.goModules} ./vendor
         chmod -R +w ./vendor

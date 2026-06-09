@@ -9,20 +9,29 @@ Committed working preferences and learnings live in @.claude/memory.md.
 `classify-bash` is a Claude Code **PreToolUse hook for the `Bash` tool**. It reads
 one hook event on stdin, parses the embedded shell command, and emits an `allow`
 permission decision **only** when the command matches a strict read-only
-whitelist; anything else falls through silently to the normal permission prompt.
-It is an accelerator, never a gate — see [README.md](README.md) for the contract
-and [DESIGN.md](DESIGN.md) for the rationale (allow-only, positive whitelist,
-tiers A–F, AST handling, the goawk fork).
+whitelist; anything else falls through silently to the normal permission prompt
+(silent by default — see opt-in logging below). It is an accelerator, never a
+gate — see [README.md](README.md) for the contract and [DESIGN.md](DESIGN.md) for
+the rationale (allow-only, positive whitelist, tiers A–F, AST handling, the goawk
+fork, opt-in logging).
 
 ## Architecture
 
 One event flows through a fixed pipeline; reading these in order is the fastest
 way to understand the whole thing:
 
-- **`main.go`** — entry point. Decode the event, classify the command, and on
-  `decisionAllow` print the fixed allow JSON (hand-written, no `encoding/json` on
-  the emit path). Everything else is silent exit 0. `failLoud` is the only path
-  to exit 2.
+- **`main.go`** — entry point. Resolve logging flags (`parseLogFlags`), decode the
+  event, classify the command, and on `decisionAllow` print the fixed allow JSON
+  (hand-written, no `encoding/json` on the emit path). Everything else is silent
+  exit 0. `failLoud` is the only path to exit 2 (and best-effort logs a `failloud`
+  record via the package-level `logCfg`/`currentCommand`).
+- **`log.go`** — opt-in, best-effort logging of the **non-allowed** cases
+  (fall-through + `failLoud`). Off by default; configured by CLI flags
+  (`--log`/`--log-to`/`--log-file`) at the registration site, not by env. Two
+  failure classes with different strictness: log *writes* are swallowed (never
+  block); log *config* (flags) is validated strictly → `failLoud`. Journal sink is
+  stdlib `log/syslog` (no new dependency). See DESIGN.md "Logging non-allowed
+  commands".
 - **`event.go`** — strict JSON decode (`DisallowUnknownFields`) of the PreToolUse
   payload into `event`/`toolInput`. Only `command` is read; every other field is
   enumerated as an ignored `json.RawMessage` so name-drift fails loud but

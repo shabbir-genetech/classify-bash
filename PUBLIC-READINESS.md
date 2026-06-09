@@ -58,3 +58,11 @@ Any hit is a deal-breaker — stop and re-scrub (`git filter-repo --replace-text
 - Confirm `README.md`, `DESIGN.md`, and this file contain no internal handles,
   hostnames, or paths.
 - Decide on a `LICENSE`.
+
+**Note — opt-in logging writes literal commands.** This is not a repo-content
+leak, but a deployment one: with `--log` enabled, the hook records every
+non-allowed command verbatim to the journal or a file (`log.go`). It is **off by
+default**; the default file path resolves at runtime from `$XDG_STATE_HOME`/`$HOME`
+(no hardcoded paths). When enabling it on a shared or recorded host, treat that log
+as containing whatever Claude tried to run, and scope its location/retention
+accordingly.

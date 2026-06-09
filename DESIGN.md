@@ -54,6 +54,66 @@ the vendor hash is unaffected. This has already happened once for an `effort`
 field that the harness began attaching both inside `tool_input` and at the top
 level — both structs now carry an ignored `Effort`.
 
+## Logging non-allowed commands
+
+Logging is **opt-in** and records only the *non-allowed* cases — fall-through and
+`failLoud` — as one JSON line each (`log.go`). It exists so you can see what is
+failing to accelerate and notice classifier staleness. Several design choices are
+non-obvious enough to record here.
+
+**Off by default.** The documented contract is silence on fall-through, and a log
+contains the literal commands Claude tried to run. So the binary defaults to no
+logging; the registration site (a Nix-generated `settings.json`) opts in with
+`--log`. Default-off keeps the public contract honest and the privacy story simple.
+
+**Synchronous, not async.** The tempting design is to hand the decision back and
+log in a goroutine afterwards. It does not work: a goroutine cannot outlive
+`os.Exit`, and the hook *must* exit for Claude Code to proceed — on fall-through,
+exit 0 *is* the signal, so there is no "after we returned" window inside the
+process. The only way to truly defer is a detached child process, which costs
+milliseconds (fork+exec; a bare fork is unsafe in Go's multithreaded runtime) to
+avoid a microsecond append. So we write synchronously before exit. This is fine
+because the non-allow path is already headed for a permission prompt — orders of
+magnitude slower than the write.
+
+**Journal via stdlib `log/syslog`, not native journald.** The journal sink would
+ideally use the native protocol for indexed fields (`journalctl
+CLASSIFY_BASH_COMMAND=…`), but that needs `coreos/go-systemd`, which changes the
+`buildGoModule` `vendorHash` and churns `go.sum`. `log/syslog` is in the standard
+library, needs no dependency, and still lands in journald via `/dev/log` on systemd
+systems — the cost is grep-only (`MESSAGE`), no indexed fields. Worth a dependency
+later only if field queries become a real workflow.
+
+One non-obvious cost did surface: `log/syslog` imports `net`, which enables **cgo**
+and makes the hermetic flake-check build want a C compiler it has no reason to
+carry (`cgo: C compiler "gcc" not found`). The fix is `CGO_ENABLED=0`, set in
+`flake.nix` on both the package and the test check — pure-Go `net` builds fine, and
+unix-socket dialing needs no DNS resolver, so syslog still works. This also matches
+the static-binary deploy. See "Build gotcha". With a live `/dev/log` present,
+`--log-to=auto` therefore sends records to journald, not the fallback file — query
+them with `journalctl -t classify-bash`.
+
+**Strictness split by failure class.** This is the one place logging touches the
+safety argument. Two different failures, two different postures:
+
+- *Log writes* (socket down, disk full, unwritable dir) are transient and
+  environmental — every error is **swallowed**. A write must never change the
+  decision and never `failLoud`, or the side-channel logger becomes a path that can
+  block a tool call, breaking the allow-only asymmetry. The earlier-stated
+  invariant "logging never blocks" lives here, scoped to *writes*.
+- *Log config* (the flags) is static, deterministic operator input — a bad flag
+  **`failLoud`s (exit 2)**, the same posture as the strict JSON decoder above. A
+  typo in `--log-to` blocks all Bash acceleration until fixed; that is the intended
+  trade (you hear about a misconfigured logger on the first call, rather than
+  silently not logging). Because the flags resolve *before* the sink config exists,
+  a flag-parse `failLoud` itself logs nothing — it only prints to stderr and exits.
+
+`failLoud` is reachable from deep inside the classifier and calls `os.Exit` on the
+spot, so `main` never regains control; to let it record a `failloud` line it reads
+two package-level globals (`logCfg`, `currentCommand`) that `main` populates as
+soon as they are known. Both stay zero until then, so any early `failLoud` simply
+logs nothing.
+
 ## AST handling (`classifyCmd`)
 
 The shell command is parsed with `mvdan.cc/sh/v3/syntax`. Compound forms are
@@ -147,3 +207,12 @@ The flip side of auto-snapshot: `nix build` drops a `result` symlink into the
 working copy, and jj will snapshot it too. `/result` is in `.gitignore` to keep
 it out of commits — check `jj st` before committing so a stray artifact doesn't
 ride along.
+
+**cgo via stdlib `net`.** Importing a stdlib package that pulls in `net` — e.g.
+`log/syslog` for the journal sink — enables cgo, so the pure-Go hermetic build
+needs `CGO_ENABLED=0` (set in `flake.nix` on both the package's `env` and the test
+check's `runCommand`). Without it the build fails `cgo: C compiler "gcc" not
+found`, because the check carries only `pkgs.go`, no compiler. The dev shell
+happens to have a `cc` (via `stdenv`), so `go test` there can mask this — always
+trust `nix flake check`, not just the dev-shell run. Keep CGO disabled when adding
+any net-importing stdlib package.

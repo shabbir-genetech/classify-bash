@@ -19,21 +19,44 @@ import (
 )
 
 func main() {
+	// Resolve logging config first, before anything that can failLoud, so the
+	// global is in place. Strict: a bad flag failLouds (exit 2).
+	cfg, err := parseLogFlags(os.Args[1:])
+	if err != nil {
+		failLoud("bad flag: %v", err)
+	}
+	logCfg = cfg
+
 	ev, err := decodeEvent(os.Stdin)
 	if err != nil {
 		failLoud("%v", err)
 	}
+	currentCommand = ev.ToolInput.Command
+
 	if classifyCommand(ev.ToolInput.Command) == decisionAllow {
 		emitAllow()
 	}
-	// Otherwise: silent fall-through (exit 0, no output).
+	// Fall-through: best-effort log, then silent exit 0.
+	logNonAllow(logCfg, "fallthrough", ev.ToolInput.Command, "")
 }
+
+// logCfg and currentCommand are process-global because failLoud — reachable from
+// deep in the classifier, before main regains control — needs them to record a
+// failloud event. Both stay zero (nil / "") until main resolves them, so any
+// failLoud that fires earlier (e.g. a bad flag) simply logs nothing.
+var (
+	logCfg         *logConfig
+	currentCommand string
+)
 
 // failLoud prints "classify-bash: <msg>" to stderr and exits with code 2.
 // Used for every contract violation we want to be noisy about so we hear
-// about it rather than silently ship a stale classifier.
+// about it rather than silently ship a stale classifier. It also best-effort
+// logs a failloud record (a no-op unless logging is configured and enabled).
 func failLoud(format string, args ...any) {
-	fmt.Fprintf(os.Stderr, "classify-bash: "+format+"\n", args...)
+	msg := fmt.Sprintf(format, args...)
+	logNonAllow(logCfg, "failloud", currentCommand, msg)
+	fmt.Fprintf(os.Stderr, "classify-bash: %s\n", msg)
 	os.Exit(2)
 }
 

@@ -10,6 +10,7 @@ strict whitelist of read-only forms.
 - **Allow-only.** The hook never emits `deny` or `ask`. Unsafe or
   unclassifiable commands fall through (exit 0 with no stdout) to Claude
   Code's normal permission prompt. We accelerate, we do not gate.
+  These non-allowed cases can optionally be logged — see [Logging](#logging-opt-in).
 - **Strict whitelist.** Every command, subcommand, and flag is enumerated
   positively in `commands.go`. Unknown command, unknown subcommand, or
   unknown flag on a known command → fall through. We never write
@@ -31,6 +32,38 @@ strict whitelist of read-only forms.
 | Bash parser refuses the input                       | 0    | empty       | empty                           |
 | JSON contract violation (incl. unknown fields)      | 2    | empty       | `classify-bash: <reason>`       |
 | Unknown `mvdan/sh` AST node kind                    | 2    | empty       | `classify-bash: unknown ...`    |
+
+## Logging (opt-in)
+
+Off by default — the hook stays silent on fall-through. When enabled with `--log`,
+every **non-allowed** command is recorded as one best-effort JSON line: both the
+fall-through cases and the `failLoud` (contract-violation) cases. Allowed commands
+are never logged. Logging can only fail to record — it never changes the decision
+and never blocks a call.
+
+| Flag         | Default                              | Meaning                                                                       |
+| ------------ | ------------------------------------ | ----------------------------------------------------------------------------- |
+| `--log`      | off                                  | enable logging                                                                |
+| `--log-to`   | `auto`                               | `auto` (journal if reachable, else file), `journal` (strict), or `file`       |
+| `--log-file` | `$XDG_STATE_HOME/classify-bash/log`  | file path for `file`, and the `auto` fallback (then `~/.local/state/...`)      |
+
+Each record is one line:
+
+```json
+{"ts":"2026-…Z","kind":"fallthrough","command":"rm -rf /tmp/x"}
+{"ts":"2026-…Z","kind":"failloud","command":"","reason":"decode stdin: json: unknown field \"surprise\""}
+```
+
+`reason` appears only for `failloud` events; `orig_len` (original byte length)
+appears only when the command was truncated (4 KB cap). On systemd the journal
+sink lands in journald via `/dev/log` — query `journalctl -t classify-bash` and
+grep the message.
+
+**Strictness is split by failure class:** log *writes* are best-effort (every
+error swallowed), but log *config* is validated strictly — a bad flag exits 2 and
+blocks the call, the same posture as the JSON decoder. So `--log-to=typo` will
+stop every Bash call until fixed; this is intentional (you hear about a
+misconfigured logger immediately rather than silently not logging). See DESIGN.md.
 
 ## Build and test
 
@@ -65,6 +98,24 @@ nix flake check
 # -> (exit 2)
 ```
 
+Logging is off by default. Enable it (here to a file) and a non-allowed command is
+recorded as one JSON line; allowed commands are not:
+
+```bash
+./result/bin/classify-bash --log --log-to=file --log-file=/tmp/cb.log \
+  <<<'{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"rm -rf /tmp/x"}}'
+cat /tmp/cb.log
+# -> {"ts":"…Z","kind":"fallthrough","command":"rm -rf /tmp/x"}
+
+# A bad flag is strict — it exits 2 and blocks the call (like the JSON decoder):
+./result/bin/classify-bash --log --log-to=banana <<<'…'
+# -> classify-bash: bad flag: unknown --log-to "banana" (want auto, journal, or file)
+# -> (exit 2)
+```
+
+With `--log-to=auto` on a systemd host (a live `/dev/log`), records go to the
+journal instead of the file — read them with `journalctl -t classify-bash`.
+
 ## Registration
 
 Once the binary is on `$PATH`, add this to `~/.claude/settings.json`:
@@ -83,6 +134,9 @@ Once the binary is on `$PATH`, add this to `~/.claude/settings.json`:
   }
 }
 ```
+
+To turn on the audit log (see [Logging](#logging-opt-in)), pass the flags in the
+command, e.g. `"command": "classify-bash --log --log-to=auto"`.
 
 ## Extending the whitelist
 
