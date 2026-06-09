@@ -32,6 +32,11 @@ way to understand the whole thing:
   block); log *config* (flags) is validated strictly → `failLoud`. Journal sink is
   stdlib `log/syslog` (no new dependency). See DESIGN.md "Logging non-allowed
   commands".
+- **`journal_unix.go` / `journal_other.go`** — the `writeJournal` sink, split by
+  build tag because `log/syslog` is Unix-only. `_unix` (`!windows && !plan9`) uses
+  syslog; `_other` is a stub that errors so Windows/Plan9 still build (the file
+  sink works there, `journal` drops, `auto` falls back to file). Keep the binary
+  portable — `log.go` itself imports nothing OS-restricted.
 - **`event.go`** — strict JSON decode (`DisallowUnknownFields`) of the PreToolUse
   payload into `event`/`toolInput`. Only `command` is read; every other field is
   enumerated as an ignored `json.RawMessage` so name-drift fails loud but

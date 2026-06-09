@@ -93,6 +93,15 @@ the static-binary deploy. See "Build gotcha". With a live `/dev/log` present,
 `--log-to=auto` therefore sends records to journald, not the fallback file — query
 them with `journalctl -t classify-bash`.
 
+`log/syslog` is also **Unix-only** (`!windows && !plan9`); importing it
+unconditionally would make the whole package fail to compile on Windows. So the
+journal sink is split by build tag: `writeJournal` lives in `journal_unix.go`
+(`//go:build !windows && !plan9`, uses `log/syslog`), with a stub in
+`journal_other.go` that returns an error on Windows/Plan9. The stub keeps the
+binary buildable everywhere; there, `auto` falls back to the file and `journal`
+drops. Everything else (`log.go`) stays portable, so the file sink works on every
+platform. Keep this split if you add another OS-restricted sink.
+
 **Strictness split by failure class.** This is the one place logging touches the
 safety argument. Two different failures, two different postures:
 

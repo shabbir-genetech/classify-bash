@@ -57,7 +57,8 @@ Each record is one line:
 `reason` appears only for `failloud` events; `orig_len` (original byte length)
 appears only when the command was truncated (4 KB cap). On systemd the journal
 sink lands in journald via `/dev/log` — query `journalctl -t classify-bash` and
-grep the message.
+grep the message. The journal sink is **Linux/macOS only** (it uses `log/syslog`);
+on Windows/Plan9 it is unavailable, so `auto` uses the file and `journal` drops.
 
 **Strictness is split by failure class:** log *writes* are best-effort (every
 error swallowed), but log *config* is validated strictly — a bad flag exits 2 and
@@ -83,6 +84,28 @@ nix build
 # Run the test corpus via `nix flake check`:
 nix flake check
 ```
+
+### Without Nix
+
+It is a plain Go module — no Nix required to build or install:
+
+```bash
+go build -o classify-bash .   # or: go install .
+go test ./...
+```
+
+Put the resulting binary on `$PATH` and register it the same way (see
+[Registration](#registration)). Two caveats:
+
+- **The goawk dependency is a `replace`-pinned fork** (it re-exports goawk AST
+  types `styleAwk` needs). `go build` must be able to resolve it; if that fork is
+  not public you need git credentials / `GOPRIVATE`. See
+  [PUBLIC-READINESS.md](PUBLIC-READINESS.md).
+- **Platform support: Linux and macOS.** Windows/Plan9 build too, but the
+  **journal** sink is unavailable there (it uses `log/syslog`, which those
+  platforms lack), so `--log-to=journal` is a no-op and `--log-to=auto` always
+  uses the file. The journal proper needs systemd (Linux). For a fully static
+  binary, `CGO_ENABLED=0 go build` (the journal sink imports `net`).
 
 ## Manual smoke test
 

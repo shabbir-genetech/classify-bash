@@ -5,7 +5,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"log/syslog"
 	"os"
 	"path/filepath"
 	"time"
@@ -149,20 +148,10 @@ func formatRecord(kind, command, reason string) string {
 	return string(b)
 }
 
-// writeJournal sends the record to the local syslog/journal socket. On systemd
-// systems this lands in the journal (journalctl -t classify-bash). A dial error is
-// how sink=auto detects journal absence and falls back to the file.
-func writeJournal(line string) error {
-	if line == "" {
-		return nil
-	}
-	w, err := syslog.New(syslog.LOG_INFO|syslog.LOG_USER, "classify-bash")
-	if err != nil {
-		return err
-	}
-	defer w.Close()
-	return w.Info(line)
-}
+// writeJournal sends the record to the local syslog/journal socket. It is defined
+// per-platform: journal_unix.go uses log/syslog (Linux/macOS/BSD), journal_other.go
+// is a stub on Windows/Plan9 where log/syslog does not exist — there it returns an
+// error so sink=auto falls back to the file and sink=journal drops.
 
 // writeFile appends the record with a single O_APPEND write — atomic across
 // concurrent hooks on Linux (the inode lock serializes whole write() calls; the
