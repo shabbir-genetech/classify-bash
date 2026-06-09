@@ -222,6 +222,16 @@ ride along.
 needs `CGO_ENABLED=0` (set in `flake.nix` on both the package's `env` and the test
 check's `runCommand`). Without it the build fails `cgo: C compiler "gcc" not
 found`, because the check carries only `pkgs.go`, no compiler. The dev shell
-happens to have a `cc` (via `stdenv`), so `go test` there can mask this — always
-trust `nix flake check`, not just the dev-shell run. Keep CGO disabled when adding
-any net-importing stdlib package.
+happens to have a `cc` (via `stdenv`), so `go test` there can mask this — trust
+`nix flake check`, not just the dev-shell run. Keep CGO disabled when adding any
+net-importing stdlib package.
+
+**Host-only gates → cross-compile for portability.** Both the dev-shell `go test`
+and `nix flake check` build only for the *host* platform (Linux here), so neither
+catches a cross-*platform* break. The journal sink learned this the hard way:
+`log/syslog` is Unix-only, and an unconditional import compiled cleanly on Linux
+(green flake check) while silently breaking the Windows build. When you add or move
+a stdlib import, sanity-check with `GOOS=windows go build ./...` and `GOOS=darwin
+go build ./...` — they need no C toolchain and catch exactly the regression the
+gates miss. (That is why the journal sink is build-tagged; see "Logging
+non-allowed commands".)

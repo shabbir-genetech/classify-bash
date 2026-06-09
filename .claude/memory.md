@@ -13,6 +13,11 @@ README.md — this file is for how we work, not what the code is.)
   (`prog < file`), not a pipe. For classify-bash binary smoke tests, write the
   PreToolUse event JSON to a file and run `./result/bin/classify-bash < event.json`.
 - **Chain dependent steps with `&&`**, not `;`, so a failed step aborts the rest.
+- **Cross-compile when touching imports**: the dev shell `go test` and `nix flake
+  check` build only for the host (Linux), so they miss cross-platform breaks (a
+  Unix-only stdlib import can pass them and still fail on Windows). Sanity-check
+  with `GOOS=windows go build ./...` / `GOOS=darwin go build ./...`. See DESIGN.md
+  "Build gotcha".
 
 ## Version control (jj)
 
