@@ -150,6 +150,17 @@ the journal hit all three):
   along; the real blockers on those lines were `jj bookmark` and a non-whitelisted
   `sed`. Confirm against `commands.go` before adding.
 
+Read the records in one shot with `journalctl -t classify-bash -o cat` (each line is
+the raw JSON record — no journald framing) and summarize them in a single pass rather
+than scrolling the lot; a triage healthy-check is mostly counting `kind` (any
+`failloud`?) and bucketing the fall-throughs by leading command. One caveat the
+records make obvious: **triaging the log pollutes the log.** The analysis commands are
+themselves Bash tool calls — `journalctl … -o cat`, a `python3 - <<'EOF'` heredoc, an
+`ls`/`echo` probe — and they fall through (heredocs and most multi-statement lists are
+never whitelistable), so each pass appends a tail of near-duplicate self-referential
+records. Expect them, and read the *substantive* fall-throughs as the ones that predate
+your current session.
+
 ## AST handling (`classifyCmd`)
 
 The shell command is parsed with `mvdan.cc/sh/v3/syntax`. Compound forms are
