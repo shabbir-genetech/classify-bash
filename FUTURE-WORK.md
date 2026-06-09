@@ -141,6 +141,19 @@ sort the named file. Represented as a second spec bool,
 `ArgvDataSafeAfterDashDash` — like Tier 1, a *subset of the main list* marked by a
 property, never a new command list.
 
+### Tier 2 is a whitelist, never a blacklist
+`ArgvDataSafeAfterDashDash` is a positive, default-`false` opt-in: a command
+receives a substituted operand after `--` **only if it is individually vetted and
+marked**, with `mustAllow`/`mustNotAllow` tests — exactly like `ArgvDataSafe` and
+`safeCommands` itself. The tempting shortcut is a *blacklist* — "after a literal
+`--`, allow a substituted operand for *any* command except a deny-list of
+dangerous ones" — and it is **wrong**: it fails *open*, so a tool we never
+considered, or a future release that adds a `--`-immune write path, slips through.
+This is why `find` being `--`-immune (its `-delete`/`-exec` predicates ignore
+`--`) is simply *a reason to leave it off the whitelist*, not something a blacklist
+would have to enumerate. Default-deny, positively add. See DESIGN.md "Strict
+positive whitelist".
+
 ### Caveats / why it's its own vetted set
 - **`--` is not universal.** Non-getopt tools parse their own grammar: `find`
   keeps treating `-delete`/`-exec` as predicates regardless of a leading `--`, so
