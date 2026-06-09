@@ -133,15 +133,14 @@ flake input, but local dev here is jj.)
 
 ## Privacy invariant
 
-This repo's history was scrubbed so it can be made public later, and it is
-currently **private** (target: `github.com/shabbir-genetech/classify-bash`). Do
-not introduce genuinely-internal identifiers (real home paths, internal project
-codenames, work email/domain). The `shabbir-genetech` handle is **not** secret —
-it is the public publishing account (and the public goawk fork's owner), so it is
-fine in `go.mod`, docs, and the module path. Before flipping the repo public, work
-through [PUBLIC-READINESS.md](PUBLIC-READINESS.md) — the goawk fork is resolved
-(public); what remains is the leak gate for the other private tokens and a final
-review.
+This repo is **PUBLIC** (since 2026-06-09, at
+`github.com/shabbir-genetech/classify-bash`); its history was scrubbed before the
+flip. It stays clean going forward: do **not** commit genuinely-internal
+identifiers (real home paths, internal project codenames, work email/domain). The
+`shabbir-genetech` handle is **not** secret — it is the publishing account (and the
+public goawk fork's owner), so it is fine in `go.mod`, docs, and the module path.
+[PUBLIC-READINESS.md](PUBLIC-READINESS.md) records the gate that was run (and is
+reusable if history is ever rewritten).
 
 ## How it's deployed
 

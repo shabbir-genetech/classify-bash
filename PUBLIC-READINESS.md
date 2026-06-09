@@ -1,8 +1,11 @@
 # Public-readiness checklist
 
+> **STATUS: PUBLIC since 2026-06-09** at `github.com/shabbir-genetech/classify-bash`.
+> Every item below is resolved. This file is kept as the record of what was checked
+> and as a reusable gate if the history is ever rewritten or needs re-verifying.
+
 This repo was extracted from a private parent repository with its history
-**scrubbed** so it could be made public safely. It is currently **private**.
-Run through this checklist **before** flipping it to public.
+**scrubbed** so it could be made public safely. The checklist that gated the flip:
 
 ## 1. goawk fork — RESOLVED
 
@@ -33,6 +36,8 @@ file itself carries none of the tokens it guards against.
 ```bash
 # (1) no real home paths / internal project names anywhere in history.
 #     <internal-path-tokens> = e.g. your real $HOME basename, internal project slugs.
+#     EXPECTED (not leaks): the corpus uses generic `/home/user` and `/path/to/...`
+#     placeholders in test fixtures — those are fine.
 git log -p | grep -niE '<internal-path-tokens>' && echo "PATH LEAK"
 # (2) no internal email prefixes / domains / org names anywhere.
 #     <internal-id-tokens> = e.g. work email local-part, company domain, org slugs.
@@ -48,9 +53,12 @@ identity (see section 1), so it is no longer a secret to scan for. Any hit on (1
 or (2), or an unexpected author in (3), is a deal-breaker — stop and re-scrub
 (`git filter-repo --replace-text` / `--replace-message`) before publishing.
 
-A spot-check from the jj working copy (not a substitute for the full git-clone
-pass): author identity is the demo placeholder across all commits, and
-`genetech`/`shabbir` appear nowhere outside the `go.mod` replace pin.
+**Result (2026-06-09):** PASSED. Run against a fresh `git clone` of the published
+remote over all (`--all`) history — author *and* committer identity are the demo
+placeholder only; no email addresses; no `webadmin`/`genetech.co`; the only
+absolute-home-path hits are the corpus's generic `/home/user` and `/path/to`
+placeholders; `genetech`/`shabbir` appear only as the publishing handle. The
+owner also confirmed there are no internal project codenames to scrub.
 
 ## 3. Final review
 
@@ -64,10 +72,14 @@ pass): author identity is the demo placeholder across all commits, and
   permissive and compatible with our MIT. `THIRD_PARTY_LICENSES` reproduces their
   notices for binary redistribution, and `nix flake check`'s `checks.licenses`
   (`go-licenses check`) fails if a future copyleft dependency sneaks in.
-- Skim `git log --oneline` for any commit subject/body that reveals private
-  context. (Spot-checked clean from the jj copy — all subjects are generic.)
-- Confirm `README.md`, `DESIGN.md`, and this file contain no internal hostnames or
-  paths (the `shabbir-genetech` handle is fine — it is the publishing account).
+- **Commit subjects — done:** skimmed `git log` over all history; all subjects are
+  generic, none reveal private context.
+- **Docs — done:** `README.md`, `DESIGN.md`, and this file carry no internal
+  hostnames or paths (the `shabbir-genetech` handle is fine — it is the publishing
+  account).
+- **Outstanding (optional, not blockers):** swap the `LICENSE` copyright holder to
+  a legal name/entity if preferred; add a GitHub Actions workflow running
+  `nix flake check`; upstream the goawk `ast/` re-export to drop the `replace`.
 
 **Note — opt-in logging writes literal commands.** This is not a repo-content
 leak, but a deployment one: with `--log` enabled, the hook records every

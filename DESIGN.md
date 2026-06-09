@@ -150,8 +150,10 @@ forms are deliberately out of scope for v1.
 Walking the program needs goawk's AST types, which upstream keeps in an
 unimportable `internal/ast` package. A **thin goawk fork** (see the `replace`
 directive in `go.mod`) adds an `ast/` package that re-exports those types; that
-is the *only* reason for the fork. See [PUBLIC-READINESS.md](PUBLIC-READINESS.md)
-for what to do about that fork before making this repo public.
+is the *only* reason for the fork. The fork is public
+(`github.com/shabbir-genetech/goawk`), so `go build` resolves it normally;
+upstreaming the `ast/` re-export to drop the `replace` is optional cleanup (see
+[PUBLIC-READINESS.md](PUBLIC-READINESS.md)).
 
 ## `styleXargs` and the stdin-argv hazard
 
