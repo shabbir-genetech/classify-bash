@@ -66,6 +66,11 @@ blocks the call, the same posture as the JSON decoder. So `--log-to=typo` will
 stop every Bash call until fixed; this is intentional (you hear about a
 misconfigured logger immediately rather than silently not logging). See DESIGN.md.
 
+**Privacy:** records are the literal commands, verbatim. The default path is under
+`$XDG_STATE_HOME`/`$HOME` (resolved at runtime, never hardcoded). On a shared or
+recorded host, treat the log as containing whatever Claude tried to run, and scope
+its location and retention accordingly.
+
 ## Build and test
 
 The sub-flake exposes a Go-aware dev shell and a buildGoModule package.

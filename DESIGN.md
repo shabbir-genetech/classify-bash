@@ -152,8 +152,7 @@ unimportable `internal/ast` package. A **thin goawk fork** (see the `replace`
 directive in `go.mod`) adds an `ast/` package that re-exports those types; that
 is the *only* reason for the fork. The fork is public
 (`github.com/shabbir-genetech/goawk`), so `go build` resolves it normally;
-upstreaming the `ast/` re-export to drop the `replace` is optional cleanup (see
-[PUBLIC-READINESS.md](PUBLIC-READINESS.md)).
+upstreaming the `ast/` re-export to drop the `replace` is optional cleanup.
 
 ## `styleXargs` and the stdin-argv hazard
 

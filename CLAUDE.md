@@ -109,9 +109,9 @@ The working copy is managed by **jujutsu (`jj`)** — there is a `.jj/` director
   `jj bookmark set master -r @-`, then `jj git push --bookmark master`. (No AI
   attribution in the message; see Conventions.)
 
-(DESIGN.md's "Build gotcha" and PUBLIC-READINESS.md's leak gate now call out the
-jj-vs-git split explicitly; the published upstream is consumed as a `git+ssh`
-flake input, but local dev here is jj.)
+(DESIGN.md's "Build gotcha" calls out the jj-vs-git split explicitly; the
+published upstream is consumed as a `git+ssh` flake input, but local dev here is
+jj.)
 
 ## Conventions
 
@@ -139,8 +139,9 @@ flip. It stays clean going forward: do **not** commit genuinely-internal
 identifiers (real home paths, internal project codenames, work email/domain). The
 `shabbir-genetech` handle is **not** secret — it is the publishing account (and the
 public goawk fork's owner), so it is fine in `go.mod`, docs, and the module path.
-[PUBLIC-READINESS.md](PUBLIC-READINESS.md) records the gate that was run (and is
-reusable if history is ever rewritten).
+The pre-publication leak gate (a fresh-clone history scan for real home paths,
+emails, and author identity) passed on 2026-06-09; re-run that scan if the history
+is ever rewritten.
 
 ## How it's deployed
 
