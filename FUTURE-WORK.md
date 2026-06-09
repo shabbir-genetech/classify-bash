@@ -241,33 +241,87 @@ unrecognized.
 
 ---
 
-## 5. `journalctl` and `gh` read subcommands — **CANDIDATE (log-driven, 2026-06-09)**
+## 5. `journalctl` and `gh` read subcommands — **APPROVED (spec'd 2026-06-09)**
 
-Pure whitelist coverage, no new classifier feature — the highest-hit-rate, lowest-
-risk items the first corpus surfaced. These are *extend-the-whitelist* tasks
-(README "Extending the whitelist"), not research; they still want design-first
-sign-off and the usual `mustAllow` + wall (`mustNotAllow`) cases.
+Pure whitelist coverage, no new classifier feature — the highest-hit-rate,
+lowest-risk items the first corpus surfaced. *Extend-the-whitelist* tasks
+(README "Extending the whitelist"), not research. Both commands carry
+destructive/mutating modes on the same binary, so the discipline is the usual
+one: **enumerate only the safe forms; never "allow X except Y".** Every dangerous
+mode is left *off* the whitelist (it falls through by default) and recorded in a
+`// deliberately excluded` comment, never enumerated as a deny-list.
 
-- **`journalctl`** — a pure reader; no write/exec/network path. The observed uses
-  are `journalctl -t <tag> --no-pager [-o cat]`. Straightforward `styleGNU` spec.
-  Watch the corners that are *not* read-only and must stay off the flag list:
-  `--flush`, `--rotate`, `--vacuum-*`, `--setup-keys`, `--update-catalog`, and the
-  `--output=` variants that can shell out. Default-deny flags; enumerate only the
-  read/query ones (`-t/--identifier`, `-u/--unit`, `-n/--lines`, `--since`,
-  `--until`, `--no-pager`, `-o/--output` restricted to safe formatters, `-g/--grep`,
-  `-r/--reverse`, `-k/--dmesg`-style read filters).
-- **`gh`** — *not* a pure reader: it has heavy mutate/network-write subcommands
-  (`repo edit`, `pr create|merge|close`, `release create`, `api` with `-X POST…`).
-  Whitelist it the way `jj` is whitelisted: **per-subcommand**, allowing only the
-  read forms seen in the corpus — `gh auth status`, `gh repo view`, and the
-  read-only slice of `gh api` (GET only; reject `-X/--method` ≠ GET and `-f/--field`
-  writes). `gh api` is the sharp edge — a substituted/elevated method turns a
-  "read" into a write, so treat any non-GET as fall-through and keep `api` off
-  `ArgvDataSafe`.
+Scope locked by sign-off (2026-06-09): **D1** include `gh api` GET-only · **D2**
+`gh` observed-only subcommands · **D3** exclude journalctl alternate-location flags.
 
-Acceptance: the relevant `journalctl … ` / `gh repo view …` lines move into
-`TestMustAllow`; add `TestMustNotAllow` for `journalctl --vacuum-size=1G`,
-`gh repo edit … --visibility public`, `gh api … -X POST`, etc.
+### `journalctl` — `styleGNU`, `Subcommands: nil`, `AllowAnyPositional: true`
+A pure reader **except** for management flags that write/delete. Positionals are
+field matches (`_SYSTEMD_UNIT=foo`) or executable paths — read filters.
+
+**`ArgvDataSafe: false`** — deliberately. journalctl *does* have a destructive
+path reachable through a flag (`--vacuum-size`, `--rotate`), so it is not safe
+under an arbitrary flag-shaped token. Same reasoning as §2's `sort -o`: a reader
+whose only mutation is via a flag must not be `ArgvDataSafe`.
+
+- **Whitelisted (read/query/filter/format):** `-t/--identifier`, `-u/--unit`,
+  `--user-unit`, `-n/--lines`, `-S/--since`, `-U/--until`, `-p/--priority`,
+  `-g/--grep`, `--case-sensitive`, `-b/--boot`, `-k/--dmesg`, `-o/--output`,
+  `--output-fields`, `-r/--reverse`, `-e/--pager-end`, `-x/--catalog`, `-a/--all`,
+  `-q/--quiet`, `-m/--merge`, `--utc`, `--no-pager`, `--no-tail`, `--no-full`,
+  `--no-hostname`, `-N/--fields`, `-F/--field`, `--list-boots`, `--header`,
+  `--disk-usage`, `--version`, `--help`.
+- **Deliberately excluded (must keep falling through):** `--vacuum-size`,
+  `--vacuum-time`, `--vacuum-files` (delete journals), `--rotate`, `--flush`,
+  `--sync`, `--relinquish-var`, `--smart-relinquish-var`, `--setup-keys`,
+  `--update-catalog`, `--verify`; **`-f/--follow`** (never terminates — deferred,
+  goes in `TestNotYetAllowed` not the wall); and per **D3** the alternate-location
+  readers `-D/--directory`, `--file`, `--root`, `-M/--machine`, `--namespace`.
+
+### `gh` — modeled on `gitSpec()`: `Subcommands` non-nil, no `AllowAnyPositional`
+Bare `gh` and every un-listed subcommand fall through. **`ArgvDataSafe: false`
+everywhere** — gh is network-write-capable; never hand it an opaque token. v1 tree
+(D2 observed-only):
+
+```
+gh
+├── auth → status      (login/logout/refresh/token/setup-git excluded)
+├── repo → view        (create/delete/edit/fork/clone/rename/archive/sync excluded)
+└── api                (GET-only — D1)
+```
+
+- **`gh auth status`** — flags `-h/--hostname` (arg), `-a/--active`, `--help`.
+  *Excluded:* `-t/--show-token` (prints the auth token — secret disclosure).
+- **`gh repo view`** — flags `--json` (arg), `-q/--jq` (arg), `-t/--template`
+  (arg), `-b/--branch` (arg), `-R/--repo` (arg); `AllowAnyPositional: true`
+  (the `OWNER/REPO`). *Excluded:* `-w/--web` (launches a browser).
+- **`gh api` (GET-only, the sharp edge)** — defaults to GET; `-X/--method`,
+  `-f/--raw-field`, `-F/--field`, `--input` turn it into a network write.
+  Whitelist-only closes this: we list *only* read flags (`--cache` (arg),
+  `--paginate`, `-q/--jq` (arg), `-t/--template` (arg), `--hostname` (arg),
+  `-i/--include`, `--slurp`) and **never list the method/field/input flags**, so
+  default-GET is the only reachable mode and any write form falls through.
+  `AllowAnyPositional: true` (the endpoint). *Excluded:* `-X/--method`,
+  `-f/--raw-field`, `-F/--field`, `--input`, `-H/--header`.
+
+### Code & tests
+- `commands.go`: register `"journalctl"` + `"gh"` in `safeCommands`; builders
+  `journalctlSpec`, `ghSpec`, `ghAuthSpec`, `ghAuthStatusSpec`, `ghRepoSpec`,
+  `ghRepoViewSpec`, `ghApiSpec`, each with the `// deliberately excluded` block.
+  No engine changes (`styleGNU` + nested `Subcommands` already suffice).
+- **`TestMustAllow`:** `journalctl -t classify-bash --no-pager`,
+  `journalctl -t classify-bash -o cat`, `journalctl -u sshd -n 50 --no-pager`,
+  `journalctl --since 2026-06-09 -r`, `gh auth status`,
+  `gh repo view o/r --json visibility`, `gh repo view o/r --json name -q .name`,
+  `gh api repos/o/r --jq .visibility`.
+- **`TestMustNotAllow` (the wall):** `journalctl --vacuum-size=1G`,
+  `journalctl --rotate`, `journalctl --flush`, `journalctl --update-catalog`,
+  `journalctl --setup-keys`, `gh repo edit o/r --visibility public`,
+  `gh repo delete o/r`, `gh pr create -t x`, `gh auth login`, `gh auth token`,
+  `gh auth status --show-token`, `gh repo view o/r --web`,
+  `gh api repos/o/r -X POST`, `gh api repos/o/r -f name=x`,
+  `gh api graphql -f query=x`.
+- **`TestNotYetAllowed` (harmless, deferred):** `journalctl -f`; `gh pr view 123`,
+  `gh issue list` (read subcommands outside the D2 observed-only set).
 
 ---
 
