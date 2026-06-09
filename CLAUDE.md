@@ -44,20 +44,28 @@ way to understand the whole thing:
 - **`classify.go`** — the shell-AST walk. `classifyCommand` parses with
   `mvdan.cc/sh/v3/syntax`, then recurses: `&&`/`||`/pipe/`(subshell)` recurse,
   every other compound kind is rejected, an unknown AST node calls `failLoud`.
-  `wordLiteral`/`literalWords` reject any word with expansion (`$VAR`, `$(...)`,
-  `<(...)`, …) — only fully-literal argv reaches a spec. `safeRedirect` allows
-  reads and writes only to `/dev/null`.
+  `wordLiteral` rejects any word with expansion (`$VAR`, `$(...)`, `<(...)`, …).
+  `argTokens` then classifies each operand as a literal or — the one allowed
+  expansion — a quoted `"$(...)"` command substitution whose inner command
+  classifies read-only (`wordQuotedSubst`/`classifyCmdSubst`); that token reaches a
+  spec only as an opaque positional, only for an `ArgvDataSafe` command. The
+  command name must stay literal. `safeRedirect` allows reads and writes only to
+  `/dev/null`.
 - **`spec.go`** — `commandSpec` + the five `flagStyle` matchers (`matchGNU`,
   `matchFind`, `matchWrapper`, `matchXargs`, `matchAwk`). This is the
   flag/subcommand/positional engine; the data it runs on lives in `commands.go`.
   `matchXargs` is the odd one out: no `--` separator (the first non-flag token is
-  the wrapped command) and it recurses via `classifyWrapped` into a curated
-  subset, not the full whitelist — see the privacy/safety note below and
-  DESIGN.md's "styleXargs and the stdin-argv hazard".
+  the wrapped command) and it recurses via `classifyWrapped`, which only accepts a
+  command whose spec sets `ArgvDataSafe` — see the privacy/safety note below and
+  DESIGN.md's "styleXargs and the stdin-argv hazard". The matchers take
+  `[]argToken` (literal-or-substituted), so a `"$(...)"` operand reaches a spec
+  only as an opaque positional, gated by the same `ArgvDataSafe` flag.
 - **`commands.go`** — the actual whitelist data: `safeCommands` maps each command
-  name to a `commandSpec`. This is where you add/extend allowed commands. It also
-  holds `xargsWrappable`, the curated subset `xargs` may wrap (a strict subset of
-  `safeCommands`; keep them in sync or `classifyWrapped` fails loud).
+  name to a `commandSpec`. This is where you add/extend allowed commands. The
+  `ArgvDataSafe` flag on a spec marks a command safe to receive an attacker-
+  controlled argv token (from `xargs` stdin or a `$(...)` substitution); it is the
+  single source of truth for that — no parallel list — set only on leaf readers
+  with no write path under any argv.
 - **`awk.go`** — `classifyAwkProgram` walks an awk program's AST (via the goawk
   fork) for `styleAwk`, positively whitelisting nodes/builtins.
 
@@ -83,9 +91,14 @@ notices for binary redistribution; it is generated, not hand-edited — rerun th
 script above when dependencies change.
 
 The test corpus is the spec: `TestMustAllow` (forms that must classify allow),
-`TestMustNotAllow` (forms that must fall through), and `TestEventDecode*` (the
-JSON contract). Each case is a bare command string in a table — add to the table,
-don't write new test functions.
+`TestMustNotAllow` (the safety wall — unsafe forms that must fall through),
+`TestNotYetAllowed` (forms that are harmless *as written* but fall through only
+because a classifier feature isn't built — a regression here is a feature landing,
+not an incident), and `TestEventDecode*` (the JSON contract). Each case is a bare
+command string in a table — add to the right table, don't write new test
+functions. A new fall-through case goes in `TestMustNotAllow` *unless* you can show
+it is genuinely harmless, in which case it goes in `TestNotYetAllowed`. See
+FUTURE-WORK.md "Two kinds of must not allow".
 
 ## Version control: this is a jj repo, not git
 
@@ -118,7 +131,13 @@ jj.)
 - **Strict positive whitelist** in `commands.go`: enumerate every command /
   subcommand / flag; unknown → fall through. Never "allow X except Y". When
   extending, follow the checklist in README "Extending the whitelist" and add
-  both `mustAllow` and `mustNotAllow` tests.
+  `mustAllow` cases plus the matching wall (`mustNotAllow`) / deferred-safe
+  (`TestNotYetAllowed`) cases.
+- **`ArgvDataSafe` is the one gate for attacker-controlled argv.** A command may
+  receive an unseen operand (from `xargs` stdin or a `$(...)` substitution) only if
+  its spec sets `ArgvDataSafe` — true only when it has no write/exec/network path
+  under *any* argv, flag-shaped values included. It is a field on `commandSpec`, not
+  a separate list; do not reintroduce a parallel set.
 - **Strict JSON decoder** (`event.go`): `DisallowUnknownFields`. When the Claude
   Code harness starts sending a new field on the event or inside `tool_input`,
   decoding exits 2 and BLOCKS the call. Fix: add the field as an ignored

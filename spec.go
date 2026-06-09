@@ -25,7 +25,7 @@ const (
 	// flags are short-only (`-F sep`, `-v var=val`); all listed flags must take
 	// arguments. The first non-flag positional is the awk program source,
 	// classified by classifyAwkProgram (positive-whitelisted awk AST). Any
-	// remaining positionals are file paths, accepted as-is (literalWords has
+	// remaining positionals are file paths, accepted as-is (litArgs has
 	// already rejected words with shell expansion). `--` ends flag parsing.
 	styleAwk
 	// styleXargs: stdin-append wrapper `xargs [flag…] CMD [INITIAL-ARG…]`. Unlike
@@ -71,6 +71,50 @@ type commandSpec struct {
 	Flags              []flagSpec
 	Subcommands        map[string]*commandSpec
 	AllowAnyPositional bool
+
+	// ArgvDataSafe marks a command that has NO write/exec/network path under ANY
+	// argv — safe to hand an opaque, attacker-controlled operand whose value we
+	// cannot see at classify time, even one shaped like a flag (`-rf`, `--o=x`).
+	// Two callers consult it: `classifyWrapped` (an xargs-wrapped command, fed
+	// stdin tokens) and `handlePositionals` (a positional produced by a `$(...)`
+	// command substitution). It is the single source of truth for that property —
+	// there is no parallel list. Set it ONLY on leaf reader commands; never on a
+	// command that has any output-file/exec flag (see commands.go).
+	ArgvDataSafe bool
+}
+
+// argToken is one parsed argv word handed to the matchers. It is either a literal
+// value, or an opaque "substituted" operand — a word containing a `$(...)` command
+// substitution whose inner command already classified read-only (classify.go).
+// A substituted token is NEVER a flag, never `--`, and never a flag's argument; it
+// is acceptable only as a positional, and only for an ArgvDataSafe spec.
+type argToken struct {
+	lit   string // literal value; meaningful only when !subst
+	subst bool
+}
+
+// litArgs returns the literal string values of args, or (nil, false) if any token
+// is substituted. The non-GNU matchers (find/wrapper/xargs/awk) use it to reject
+// substituted operands outright — only styleGNU + ArgvDataSafe accepts them in v1.
+func litArgs(args []argToken) ([]string, bool) {
+	out := make([]string, len(args))
+	for i, a := range args {
+		if a.subst {
+			return nil, false
+		}
+		out[i] = a.lit
+	}
+	return out, true
+}
+
+// litToks wraps literal strings as non-substituted tokens, for the recursive
+// matchers (wrapper/xargs) whose wrapped-command tails are already all-literal.
+func litToks(ss []string) []argToken {
+	out := make([]argToken, len(ss))
+	for i, s := range ss {
+		out[i] = argToken{lit: s}
+	}
+	return out
 }
 
 func (s *commandSpec) findShort(letter string) (flagSpec, bool) {
@@ -91,7 +135,7 @@ func (s *commandSpec) findLong(name string) (flagSpec, bool) {
 	return flagSpec{}, false
 }
 
-func (s *commandSpec) match(args []string) bool {
+func (s *commandSpec) match(args []argToken) bool {
 	switch s.Style {
 	case styleGNU:
 		return s.matchGNU(args)
@@ -109,10 +153,15 @@ func (s *commandSpec) match(args []string) bool {
 	}
 }
 
-func (s *commandSpec) matchGNU(args []string) bool {
+func (s *commandSpec) matchGNU(args []argToken) bool {
 	i := 0
 	for i < len(args) {
-		arg := args[i]
+		// A substituted operand is never a flag or `--` — treat it (and the rest
+		// of the tail) as positional. handlePositionals enforces ArgvDataSafe.
+		if args[i].subst {
+			return s.handlePositionals(args[i:])
+		}
+		arg := args[i].lit
 
 		// `--` ends flag parsing; remaining args are positional/subcommand-positional.
 		if arg == "--" {
@@ -143,6 +192,9 @@ func (s *commandSpec) matchGNU(args []string) bool {
 				if i+1 >= len(args) {
 					return false
 				}
+				if args[i+1].subst {
+					return false // a flag's value must be literal, never substituted
+				}
 				i++ // consume required value
 			}
 			// !hasVal && !TakesArg: fine (OptionalArg or no-arg flag, both work)
@@ -170,6 +222,9 @@ func (s *commandSpec) matchGNU(args []string) bool {
 						if i+1 >= len(args) {
 							return false
 						}
+						if args[i+1].subst {
+							return false // a flag's value must be literal, never substituted
+						}
 						consumedNext = true
 					}
 					break
@@ -194,16 +249,27 @@ func (s *commandSpec) matchGNU(args []string) bool {
 // If Subcommands is non-nil, the first element is the subcommand name and the
 // rest are re-parsed by the subcommand's spec. Otherwise we accept iff the
 // spec allows positionals (or there are none).
-func (s *commandSpec) handlePositionals(args []string) bool {
+func (s *commandSpec) handlePositionals(args []argToken) bool {
 	if s.Subcommands != nil {
 		if len(args) == 0 {
 			return false // subcommand required
 		}
-		sub, ok := s.Subcommands[args[0]]
+		if args[0].subst {
+			return false // the subcommand name must be literal so we know its spec
+		}
+		sub, ok := s.Subcommands[args[0].lit]
 		if !ok {
 			return false
 		}
 		return sub.match(args[1:])
+	}
+	// A substituted positional is opaque data; accept it only when this command is
+	// safe under ANY argv (ArgvDataSafe). Every ArgvDataSafe command also sets
+	// AllowAnyPositional, so the literal-positional check below still gates them.
+	for _, a := range args {
+		if a.subst && !s.ArgvDataSafe {
+			return false
+		}
 	}
 	if s.AllowAnyPositional {
 		return true
@@ -219,7 +285,13 @@ func (s *commandSpec) handlePositionals(args []string) bool {
 // be statically classified. The tail after `--` is looked up in safeCommands
 // and matched recursively, so the wrapper inherits the wrapped command's safety
 // rules verbatim — it never loosens them.
-func (s *commandSpec) matchWrapper(args []string) bool {
+func (s *commandSpec) matchWrapper(tokens []argToken) bool {
+	// A wrapper never accepts a substituted operand in v1: the wrapped command
+	// name and its args must all be literal so we can recurse into safeCommands.
+	args, ok := litArgs(tokens)
+	if !ok {
+		return false
+	}
 	i := 0
 	for i < len(args) {
 		arg := args[i]
@@ -233,7 +305,7 @@ func (s *commandSpec) matchWrapper(args []string) bool {
 			if !ok {
 				return false
 			}
-			return sub.match(tail[1:])
+			return sub.match(litToks(tail[1:]))
 		}
 
 		// Long flag: `--name` or `--name=value`. Same dash-prefix rule as
@@ -305,18 +377,23 @@ func (s *commandSpec) matchWrapper(args []string) bool {
 // matchXargs accepts argv of the shape `[flag…] CMD [INITIAL-ARG…]`. xargs's own
 // flags (spec.Flags, GNU style) are parsed until the first non-flag token, which
 // is the wrapped command name; the remainder are fixed initial-arguments. The
-// command is looked up in xargsWrappable — a curated subset of safeCommands — and
-// its initial-arguments classified recursively.
+// command must be ArgvDataSafe (see classifyWrapped) and its initial-arguments are
+// classified recursively.
 //
-// The curated subset (not the full whitelist) is load-bearing: xargs appends
+// The ArgvDataSafe gate (not the full whitelist) is load-bearing: xargs appends
 // stdin tokens to the wrapped argv, and those tokens are invisible here and are
 // parsed by the wrapped program (including as flags). Recursing into a command
 // that has any write path under some argv (e.g. `sort -o`, `git push`) would let
 // stdin inject that path — a write the direct form would have prompted on. Only
-// commands with no write path under ANY argv belong in xargsWrappable. The
-// replace-mode flags `-I`/`-i`/`--replace` are deliberately absent from
-// xargsSpec, so they fall through here as unknown flags.
-func (s *commandSpec) matchXargs(args []string) bool {
+// ArgvDataSafe commands have no write path under ANY argv. The replace-mode flags
+// `-I`/`-i`/`--replace` are deliberately absent from xargsSpec, so they fall
+// through here as unknown flags. xargs's own flags and the wrapped command name
+// must be literal, so a substituted token anywhere makes litArgs reject.
+func (s *commandSpec) matchXargs(tokens []argToken) bool {
+	args, ok := litArgs(tokens)
+	if !ok {
+		return false
+	}
 	i := 0
 	for i < len(args) {
 		arg := args[i]
@@ -389,23 +466,22 @@ func (s *commandSpec) matchXargs(args []string) bool {
 	return false
 }
 
-// classifyWrapped looks up tail[0] in the curated xargsWrappable set and, if
-// present, recursively classifies the fixed initial-arguments tail[1:].
+// classifyWrapped looks up tail[0] in safeCommands and, only if that command is
+// ArgvDataSafe (no write path under any argv — see commands.go), recursively
+// classifies the fixed initial-arguments tail[1:]. ArgvDataSafe lives on the spec
+// itself, so there is no separate list to keep in sync.
 func (s *commandSpec) classifyWrapped(tail []string) bool {
 	if len(tail) == 0 {
 		return false
 	}
-	if !xargsWrappable[tail[0]] {
-		return false
-	}
 	sub, ok := safeCommands[tail[0]]
 	if !ok {
-		// xargsWrappable keys are a subset of safeCommands; a miss means the two
-		// have drifted out of sync. Be loud rather than silently mis-handle.
-		failLoud("xargsWrappable command %q absent from safeCommands", tail[0])
-		return false // unreachable
+		return false
 	}
-	return sub.match(tail[1:])
+	if !sub.ArgvDataSafe {
+		return false
+	}
+	return sub.match(litToks(tail[1:]))
 }
 
 // matchAwk parses argv of the shape `[flag…] PROGRAM [files…]`. Pre-program
@@ -413,8 +489,14 @@ func (s *commandSpec) classifyWrapped(tail []string) bool {
 // The first non-flag positional is the awk program, validated by
 // classifyAwkProgram. Long flags (`--name`) and short-without-arg flags
 // fall through — gawk extensions and the `-f file` script-load form are
-// deliberately out of scope for v1.
-func (s *commandSpec) matchAwk(args []string) bool {
+// deliberately out of scope for v1. A substituted token (program or file) is
+// rejected: the program must be literal for classifyAwkProgram, and awk is not
+// ArgvDataSafe.
+func (s *commandSpec) matchAwk(tokens []argToken) bool {
+	args, ok := litArgs(tokens)
+	if !ok {
+		return false
+	}
 	i := 0
 	for i < len(args) {
 		arg := args[i]
@@ -461,7 +543,8 @@ func (s *commandSpec) matchAwk(args []string) bool {
 
 // matchAwkProgramAndFiles takes the tail starting at the awk program.
 // args[0] is the program source; args[1:] are input file paths. Files are
-// accepted as-is (literalWords already rejected anything with expansion).
+// accepted as-is (litArgs already rejected any substituted operand, and
+// wordLiteral rejected other expansions).
 func (s *commandSpec) matchAwkProgramAndFiles(args []string) bool {
 	if len(args) == 0 {
 		return false
@@ -469,13 +552,19 @@ func (s *commandSpec) matchAwkProgramAndFiles(args []string) bool {
 	return classifyAwkProgram(args[0])
 }
 
-func (s *commandSpec) matchFind(args []string) bool {
+func (s *commandSpec) matchFind(tokens []argToken) bool {
+	// find is not ArgvDataSafe (it has -delete/-exec/-fprintf), so a substituted
+	// operand is rejected outright.
+	args, ok := litArgs(tokens)
+	if !ok {
+		return false
+	}
 	i := 0
 	for i < len(args) {
 		arg := args[i]
 		if !strings.HasPrefix(arg, "-") {
-			// Positional (a path). Any literal path is fine; non-literal words
-			// were already rejected in literalWords.
+			// Positional (a path). Any literal path is fine; substituted operands
+			// were already rejected by litArgs above, other expansions by wordLiteral.
 			i++
 			continue
 		}

@@ -19,7 +19,8 @@ var safeCommands = map[string]*commandSpec{
 
 	// cat: no write flags exist in GNU coreutils.
 	"cat": {
-		Style: styleGNU,
+		ArgvDataSafe: true,
+		Style:        styleGNU,
 		Flags: []flagSpec{
 			{Short: "A", Long: "show-all"},
 			{Short: "b", Long: "number-nonblank"},
@@ -39,7 +40,8 @@ var safeCommands = map[string]*commandSpec{
 
 	// tac: reverse cat. Same shape, no writes.
 	"tac": {
-		Style: styleGNU,
+		ArgvDataSafe: true,
+		Style:        styleGNU,
 		Flags: []flagSpec{
 			{Short: "b", Long: "before"},
 			{Short: "r", Long: "regex"},
@@ -52,7 +54,8 @@ var safeCommands = map[string]*commandSpec{
 
 	// nl: number lines.
 	"nl": {
-		Style: styleGNU,
+		ArgvDataSafe: true,
+		Style:        styleGNU,
 		Flags: []flagSpec{
 			{Short: "b", Long: "body-numbering", TakesArg: true},
 			{Short: "d", Long: "section-delimiter", TakesArg: true},
@@ -74,7 +77,8 @@ var safeCommands = map[string]*commandSpec{
 	// head: -c, -n take numeric values. No write flags.
 	// Digits 0-9 added to support the deprecated `head -20 file` form (= -n 20).
 	"head": {
-		Style: styleGNU,
+		ArgvDataSafe: true,
+		Style:        styleGNU,
 		Flags: []flagSpec{
 			{Short: "c", Long: "bytes", TakesArg: true},
 			{Short: "n", Long: "lines", TakesArg: true},
@@ -92,7 +96,8 @@ var safeCommands = map[string]*commandSpec{
 	// tail: -f (follow) is read-only despite holding the file open.
 	// Digits 0-9 added to support the deprecated `tail -20 file` form.
 	"tail": {
-		Style: styleGNU,
+		ArgvDataSafe: true,
+		Style:        styleGNU,
 		Flags: []flagSpec{
 			{Short: "c", Long: "bytes", TakesArg: true},
 			{Short: "f", Long: "follow"},
@@ -115,7 +120,8 @@ var safeCommands = map[string]*commandSpec{
 
 	// wc: pure read.
 	"wc": {
-		Style: styleGNU,
+		ArgvDataSafe: true,
+		Style:        styleGNU,
 		Flags: []flagSpec{
 			{Short: "c", Long: "bytes"},
 			{Short: "m", Long: "chars"},
@@ -132,7 +138,8 @@ var safeCommands = map[string]*commandSpec{
 	// ls: large flag surface, all read-only. Common letters enumerated; less
 	// common letters intentionally omitted so future additions don't slip in.
 	"ls": {
-		Style: styleGNU,
+		ArgvDataSafe: true,
+		Style:        styleGNU,
 		Flags: []flagSpec{
 			{Short: "a", Long: "all"},
 			{Short: "A", Long: "almost-all"},
@@ -173,7 +180,7 @@ var safeCommands = map[string]*commandSpec{
 			{Short: "Z", Long: "context"},
 			{Short: "1"},
 			{Long: "block-size", TakesArg: true},
-			{Long: "color", OptionalArg: true},   // --color or --color=auto/always/never
+			{Long: "color", OptionalArg: true}, // --color or --color=auto/always/never
 			{Long: "hyperlink", OptionalArg: true},
 			{Long: "format", TakesArg: true},
 			{Long: "full-time"},
@@ -302,7 +309,8 @@ var safeCommands = map[string]*commandSpec{
 
 	// stat: pure read.
 	"stat": {
-		Style: styleGNU,
+		ArgvDataSafe: true,
+		Style:        styleGNU,
 		Flags: []flagSpec{
 			{Short: "L", Long: "dereference"},
 			{Short: "f", Long: "file-system"},
@@ -318,7 +326,8 @@ var safeCommands = map[string]*commandSpec{
 
 	// file: identify file type. Read-only.
 	"file": {
-		Style: styleGNU,
+		ArgvDataSafe: true,
+		Style:        styleGNU,
 		Flags: []flagSpec{
 			{Short: "b", Long: "brief"},
 			{Short: "h", Long: "no-dereference"},
@@ -347,7 +356,8 @@ var safeCommands = map[string]*commandSpec{
 
 	// rg (ripgrep): read-only. -o is "only-matching" (output filter), not a write.
 	"rg": {
-		Style: styleGNU,
+		ArgvDataSafe: true,
+		Style:        styleGNU,
 		Flags: []flagSpec{
 			{Short: "A", Long: "after-context", TakesArg: true},
 			{Short: "B", Long: "before-context", TakesArg: true},
@@ -492,7 +502,8 @@ var safeCommands = map[string]*commandSpec{
 
 	// cut: stdout only.
 	"cut": {
-		Style: styleGNU,
+		ArgvDataSafe: true,
+		Style:        styleGNU,
 		Flags: []flagSpec{
 			{Short: "b", Long: "bytes", TakesArg: true},
 			{Short: "c", Long: "characters", TakesArg: true},
@@ -604,7 +615,8 @@ var safeCommands = map[string]*commandSpec{
 	"sha512sum": hashSpec(),
 	"b2sum":     hashSpec(),
 	"cksum": {
-		Style: styleGNU,
+		ArgvDataSafe: true,
+		Style:        styleGNU,
 		Flags: []flagSpec{
 			{Short: "a", TakesArg: true},
 			{Long: "help"},
@@ -803,7 +815,8 @@ var safeCommands = map[string]*commandSpec{
 		AllowAnyPositional: true,
 	},
 	"basename": {
-		Style: styleGNU,
+		ArgvDataSafe: true,
+		Style:        styleGNU,
 		Flags: []flagSpec{
 			{Short: "a", Long: "multiple"},
 			{Short: "s", Long: "suffix", TakesArg: true},
@@ -814,7 +827,8 @@ var safeCommands = map[string]*commandSpec{
 		AllowAnyPositional: true,
 	},
 	"dirname": {
-		Style: styleGNU,
+		ArgvDataSafe: true,
+		Style:        styleGNU,
 		Flags: []flagSpec{
 			{Short: "z", Long: "zero"},
 			{Long: "help"},
@@ -841,7 +855,8 @@ var safeCommands = map[string]*commandSpec{
 		AllowAnyPositional: true,
 	},
 	"readlink": {
-		Style: styleGNU,
+		ArgvDataSafe: true,
+		Style:        styleGNU,
 		Flags: []flagSpec{
 			{Short: "e", Long: "canonicalize-existing"},
 			{Short: "f", Long: "canonicalize"},
@@ -1110,7 +1125,8 @@ var safeCommands = map[string]*commandSpec{
 
 	// Trivial.
 	"echo": {
-		Style: styleGNU,
+		ArgvDataSafe: true,
+		Style:        styleGNU,
 		Flags: []flagSpec{
 			{Short: "n"},
 			{Short: "e"},
@@ -1126,9 +1142,9 @@ var safeCommands = map[string]*commandSpec{
 		},
 		AllowAnyPositional: true,
 	},
-	"true": {Style: styleGNU},
+	"true":  {Style: styleGNU},
 	"false": {Style: styleGNU},
-	":": {Style: styleGNU, AllowAnyPositional: true},
+	":":     {Style: styleGNU, AllowAnyPositional: true},
 
 	// JSON: jq is mostly safe. NOT whitelisted: --in-place / -i (writes back to file).
 	"jq": {
@@ -1180,11 +1196,11 @@ var safeCommands = map[string]*commandSpec{
 
 	// === Tier B: command-with-subcommand whitelists ======================
 
-	"git":        gitSpec(),
-	"jj":         jjSpec(),
-	"nix":        nixSpec(),
-	"docker":     dockerSpec(),
-	"systemctl":  systemctlSpec(),
+	"git":       gitSpec(),
+	"jj":        jjSpec(),
+	"nix":       nixSpec(),
+	"docker":    dockerSpec(),
+	"systemctl": systemctlSpec(),
 
 	// === Tier C: flag-aware dual-use =====================================
 
@@ -1202,55 +1218,33 @@ var safeCommands = map[string]*commandSpec{
 	// === Tier F: stdin-append wrapper ====================================
 	// xargs runs `CMD [INITIAL-ARGS] <stdin-items>`. There is no `--` separator
 	// (the first non-flag token is the command), and stdin items are appended to
-	// the wrapped argv where we can't see them. Recursion is therefore gated by
-	// the curated xargsWrappable set below, not the full whitelist. See
-	// styleXargs / matchXargs in spec.go.
+	// the wrapped argv where we can't see them. Recursion is therefore gated by the
+	// wrapped command's ArgvDataSafe flag, not the full whitelist. See styleXargs /
+	// matchXargs in spec.go.
 
 	"xargs": xargsSpec(),
 }
 
-// xargsWrappable is the curated set of commands xargs may wrap. Membership rule:
-// a command belongs here ONLY if it has NO write/mutate path under ANY argv,
-// because xargs appends stdin tokens to the wrapped command's argv that we cannot
-// see at classify time — those tokens are parsed by the wrapped program,
-// including as flags. So `sort` (-o writes), `date` (-s sets the clock), `uniq`
-// (IN OUT positional), `jq` (-i), `env` (runs a command), and every
+// The set of commands xargs may wrap is no longer a separate list: it is exactly
+// the commands carrying ArgvDataSafe on their commandSpec (above). Membership rule:
+// a command is ArgvDataSafe ONLY if it has NO write/mutate path under ANY argv,
+// because both xargs (stdin tokens) and `$(...)` substitution append operands to
+// the argv that we cannot see at classify time — those tokens are parsed by the
+// program, including as flags. So `sort` (-o writes), `date` (-s sets the clock),
+// `uniq` (IN OUT positional), `jq` (-i), `env` (runs a command), and every
 // subcommand/exec command (`git`, `jj`, `nix`, `docker`, `systemctl`, `find`,
-// `awk`, `devenv`) are deliberately excluded even though they are in
-// safeCommands: stdin could inject the write. Keys here MUST be a subset of
-// safeCommands (classifyWrapped fails loud otherwise).
-//
-// v1 is the "minimal core" — the commands one actually pipes into xargs. Extend
-// deliberately, applying the rule above and adding mustAllow tests.
-var xargsWrappable = map[string]bool{
-	"cat":       true,
-	"tac":       true,
-	"nl":        true,
-	"head":      true,
-	"tail":      true,
-	"wc":        true,
-	"grep":      true,
-	"egrep":     true,
-	"fgrep":     true,
-	"rg":        true,
-	"stat":      true,
-	"file":      true,
-	"cut":       true,
-	"md5sum":    true,
-	"sha1sum":   true,
-	"sha224sum": true,
-	"sha256sum": true,
-	"sha384sum": true,
-	"sha512sum": true,
-	"b2sum":     true,
-	"cksum":     true,
-}
+// `awk`, `devenv`) deliberately do NOT set it even though they are in safeCommands:
+// an injected token could be the write. The "minimal core" set today is cat, tac,
+// nl, head, tail, wc, grep/egrep/fgrep, rg, stat, file, cut, the *sum hashes,
+// cksum, echo, ls, readlink, basename, dirname. Extend deliberately, applying the
+// rule above and adding mustAllow tests.
 
 // xargsSpec is the styleXargs spec for xargs. Flags here are the read-safe
 // "common subset"; the replace-mode flags -I/-i/--replace are deliberately NOT
 // whitelisted (they enable insertion patterns like `xargs -I{} sh -c '… {}'`),
 // so they fall through as unknown flags. The wrapped command and its safety come
-// entirely from xargsWrappable + recursive classification in matchXargs.
+// entirely from the wrapped command's ArgvDataSafe flag + recursive classification
+// in matchXargs.
 func xargsSpec() *commandSpec {
 	return &commandSpec{
 		Style: styleXargs,
@@ -1272,7 +1266,8 @@ func xargsSpec() *commandSpec {
 
 func grepSpec() *commandSpec {
 	return &commandSpec{
-		Style: styleGNU,
+		ArgvDataSafe: true,
+		Style:        styleGNU,
 		Flags: []flagSpec{
 			{Short: "A", Long: "after-context", TakesArg: true},
 			{Short: "a", Long: "text"},
@@ -1331,7 +1326,8 @@ func grepSpec() *commandSpec {
 
 func hashSpec() *commandSpec {
 	return &commandSpec{
-		Style: styleGNU,
+		ArgvDataSafe: true,
+		Style:        styleGNU,
 		Flags: []flagSpec{
 			{Short: "b", Long: "binary"},
 			{Short: "c", Long: "check"},
@@ -1436,19 +1432,19 @@ func gitSpec() *commandSpec {
 			{Short: "C", TakesArg: true},
 		},
 		Subcommands: map[string]*commandSpec{
-			"status":      gitStatusSpec(),
-			"log":         gitLogSpec(),
-			"show":        gitShowSpec(),
-			"diff":        gitDiffSpec(),
-			"rev-parse":   gitRevParseSpec(),
-			"ls-files":    gitLsFilesSpec(),
-			"ls-tree":     gitLsTreeSpec(),
-			"cat-file":    gitCatFileSpec(),
-			"blame":       gitBlameSpec(),
-			"describe":    gitDescribeSpec(),
-			"shortlog":    gitShortlogSpec(),
-			"reflog":      gitReflogSpec(),
-			"grep":        gitGrepSpec(),
+			"status":    gitStatusSpec(),
+			"log":       gitLogSpec(),
+			"show":      gitShowSpec(),
+			"diff":      gitDiffSpec(),
+			"rev-parse": gitRevParseSpec(),
+			"ls-files":  gitLsFilesSpec(),
+			"ls-tree":   gitLsTreeSpec(),
+			"cat-file":  gitCatFileSpec(),
+			"blame":     gitBlameSpec(),
+			"describe":  gitDescribeSpec(),
+			"shortlog":  gitShortlogSpec(),
+			"reflog":    gitReflogSpec(),
+			"grep":      gitGrepSpec(),
 		},
 	}
 }
@@ -1971,12 +1967,12 @@ func jjSpec() *commandSpec {
 	return &commandSpec{
 		Style: styleGNU,
 		Subcommands: map[string]*commandSpec{
-			"status":   {Style: styleGNU, AllowAnyPositional: true, Flags: jjCommonFlags()},
-			"st":       {Style: styleGNU, AllowAnyPositional: true, Flags: jjCommonFlags()},
-			"diff":     {Style: styleGNU, AllowAnyPositional: true, Flags: jjCommonFlags()},
-			"log":      {Style: styleGNU, AllowAnyPositional: true, Flags: jjCommonFlags()},
-			"show":     {Style: styleGNU, AllowAnyPositional: true, Flags: jjCommonFlags()},
-			"op":       jjOpSpec(),
+			"status":    {Style: styleGNU, AllowAnyPositional: true, Flags: jjCommonFlags()},
+			"st":        {Style: styleGNU, AllowAnyPositional: true, Flags: jjCommonFlags()},
+			"diff":      {Style: styleGNU, AllowAnyPositional: true, Flags: jjCommonFlags()},
+			"log":       {Style: styleGNU, AllowAnyPositional: true, Flags: jjCommonFlags()},
+			"show":      {Style: styleGNU, AllowAnyPositional: true, Flags: jjCommonFlags()},
+			"op":        jjOpSpec(),
 			"operation": jjOpSpec(),
 			"bookmark":  jjBookmarkSpec(),
 			"git":       jjGitSpec(),
@@ -2063,16 +2059,16 @@ func nixSpec() *commandSpec {
 	return &commandSpec{
 		Style: styleGNU,
 		Subcommands: map[string]*commandSpec{
-			"eval":          nixGenericSpec(),
-			"show-config":   nixGenericSpec(),
+			"eval":            nixGenericSpec(),
+			"show-config":     nixGenericSpec(),
 			"show-derivation": nixGenericSpec(),
-			"path-info":     nixGenericSpec(),
-			"why-depends":   nixGenericSpec(),
-			"derivation":    nixDerivationSpec(),
-			"flake":         nixFlakeSpec(),
-			"search":        nixGenericSpec(),
-			"hash":          nixHashSpec(),
-			"shell":         nixShellSpec(),
+			"path-info":       nixGenericSpec(),
+			"why-depends":     nixGenericSpec(),
+			"derivation":      nixDerivationSpec(),
+			"flake":           nixFlakeSpec(),
+			"search":          nixGenericSpec(),
+			"hash":            nixHashSpec(),
+			"shell":           nixShellSpec(),
 		},
 	}
 }
@@ -2252,19 +2248,19 @@ func systemctlSpec() *commandSpec {
 	return &commandSpec{
 		Style: styleGNU,
 		Subcommands: map[string]*commandSpec{
-			"status":           systemctlReadSpec(),
-			"is-active":        systemctlReadSpec(),
-			"is-enabled":       systemctlReadSpec(),
-			"is-failed":        systemctlReadSpec(),
-			"cat":              systemctlReadSpec(),
-			"show":             systemctlReadSpec(),
-			"list-units":       systemctlReadSpec(),
-			"list-unit-files":  systemctlReadSpec(),
-			"list-jobs":        systemctlReadSpec(),
+			"status":            systemctlReadSpec(),
+			"is-active":         systemctlReadSpec(),
+			"is-enabled":        systemctlReadSpec(),
+			"is-failed":         systemctlReadSpec(),
+			"cat":               systemctlReadSpec(),
+			"show":              systemctlReadSpec(),
+			"list-units":        systemctlReadSpec(),
+			"list-unit-files":   systemctlReadSpec(),
+			"list-jobs":         systemctlReadSpec(),
 			"list-dependencies": systemctlReadSpec(),
-			"list-timers":      systemctlReadSpec(),
-			"list-sockets":     systemctlReadSpec(),
-			"get-default":      systemctlReadSpec(),
+			"list-timers":       systemctlReadSpec(),
+			"list-sockets":      systemctlReadSpec(),
+			"get-default":       systemctlReadSpec(),
 		},
 	}
 }

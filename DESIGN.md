@@ -39,8 +39,8 @@ allow-except-list would wave it through. A positive list fails closed instead.
 - **E — scripting with a whitelisted body** (`awk`): `styleAwk` — see below.
 - **F — stdin-append wrapper** (`xargs`): `styleXargs`. Distinct from D — there
   is no `--`, the first non-flag token is the wrapped command, and recursion is
-  gated by a *curated subset* of the whitelist (`xargsWrappable`), not the whole
-  thing. See below for why.
+  gated by the wrapped command's `ArgvDataSafe` flag (commands with no write path
+  under *any* argv), not the whole whitelist. See below for why.
 
 ## Defensive JSON contract
 
@@ -210,19 +210,56 @@ just waved through. The same hole exists for `xargs git` (stdin → `push`),
 `xargs date` (→ `-s`, set the clock), `xargs uniq` (the `IN OUT` positional
 write), `xargs jq` (`-i`), and `xargs env` (runs an arbitrary command).
 
-So `styleXargs` recurses into a **curated subset**, `xargsWrappable`, whose
-membership rule is strictly stronger than "is read-only with these args": a
-command qualifies only if it has **no write/mutate path under any argv at all**,
-because stdin can supply any argv. The v1 set is the minimal core one actually
-pipes into xargs — `cat`, `head`, `tail`, `wc`, `grep`, `rg`, `stat`, `file`,
-`cut`, the `*sum`/`cksum` hashers. Every subcommand/exec command (`git`, `jj`,
-`nix`, `docker`, `systemctl`, `find`, `awk`, `devenv`) and every command with an
-excluded write flag (`sort`, `date`, `uniq`, `jq`, `env`, `hostname`, `ls` is
-simply deferred) stays out, even though they are in `safeCommands`. The
-replace-mode flags `-I`/`-i`/`--replace` are not whitelisted on `xargs` itself,
-so `xargs -I{} sh -c '… {}'` falls through as an unknown flag. `xargsWrappable`
-keys must stay a subset of `safeCommands`; a drift makes `classifyWrapped` fail
-loud.
+So `styleXargs` recurses only into commands flagged **`ArgvDataSafe`** on their
+spec, whose membership rule is strictly stronger than "is read-only with these
+args": a command qualifies only if it has **no write/mutate path under any argv at
+all**, because stdin can supply any argv. The set is the minimal core one actually
+pipes into xargs — `cat`, `tac`, `nl`, `head`, `tail`, `wc`, `grep`/`egrep`/`fgrep`,
+`rg`, `stat`, `file`, `cut`, the `*sum`/`cksum` hashers, plus the pure readers
+`echo`, `ls`, `readlink`, `basename`, `dirname`. Every subcommand/exec command
+(`git`, `jj`, `nix`, `docker`, `systemctl`, `find`, `awk`, `devenv`) and every
+command with an excluded write flag (`sort -o`, `date -s`, `uniq`'s `IN OUT`, `jq
+-i`, `env`) stays out, even though they are in `safeCommands`. The replace-mode
+flags `-I`/`-i`/`--replace` are not whitelisted on `xargs` itself, so `xargs -I{}
+sh -c '… {}'` falls through as an unknown flag. `ArgvDataSafe` lives on the
+`commandSpec` itself — there is no separate list to keep in sync, and the same flag
+gates command substitution (next section).
+
+## Command substitution `$(...)`
+
+The same stdin→argv hazard appears in `$(...)`: the inner command runs, and its
+*output* becomes an operand of the outer command — data we cannot see at classify
+time. So command substitution reuses the `ArgvDataSafe` gate. `wordLiteral` still
+rejects every expansion; `argTokens` then admits exactly one extra shape, a
+**quoted** `"$(...)"` whose inner command classifies read-only
+(`wordQuotedSubst`/`classifyCmdSubst`, recursing through `classifyStmt` like a pipe
+stage). Rules, all fail-closed:
+
+- The substitution must be **double-quoted** — bare `$(...)` word-splits and globs
+  into an unknown number of argv words; quoting pins it to one operand.
+- The result is an **opaque positional**: never the command name (that must stay
+  literal so we know the spec), never a flag, never a flag's *argument* (`head -n
+  "$(…)"` falls through), and accepted only by an **`ArgvDataSafe`** outer command
+  — one safe under any operand value, even a flag-shaped one. So `echo "$(ls)"` and
+  `cat "$(readlink -f x)"` accelerate; `sort "$(ls)"` does not.
+- `$VAR`, `$((…))`, `<(…)`, extglob, and the mksh `${ …;}` forms remain rejected;
+  an unsafe inner command (`echo "$(rm x)"`) or an unsafe inner pipeline stage
+  (`echo "$(cat x | sed …)"`) falls the whole thing through.
+
+One asymmetry worth knowing (it surprised the implementation's own first test
+expectation): a substitution **embedded in a flag-shaped token**,
+`ls --color="$(ls)"`, is a *single* word containing a `CmdSubst`, so `argTokens`
+classifies the whole token as one opaque substituted operand — and it **allows**,
+because `ls` is `ArgvDataSafe` (any operand value, flag-shaped or not, is harmless).
+But the **separate-token** form `head -n "$(…)"` falls through, because there `-n`
+is its own literal flag that demands a literal next token. Both outcomes are safe —
+one accelerates, one prompts — but the rule "flag arguments must be literal" only
+bites the separate-token shape. For a *non*-`ArgvDataSafe` command the embedded form
+is correctly rejected (`sort --output="$(ls)"` → the opaque positional fails the
+`ArgvDataSafe` check), which is the case that actually matters for safety.
+
+A `--`-leniency tier (admitting commands like `sort` after a literal `--`) is
+designed but deferred — see [FUTURE-WORK.md](FUTURE-WORK.md).
 
 ## Deferred wrapper shapes
 

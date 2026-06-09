@@ -109,15 +109,21 @@ func classifyCall(c *syntax.CallExpr) bool {
 	if len(c.Args) == 0 {
 		return false
 	}
-	words, ok := literalWords(c.Args)
+	// The command name must be a literal so we know which spec applies; a
+	// substituted name like `$(echo ls)` is rejected here.
+	name, ok := wordLiteral(c.Args[0])
 	if !ok {
 		return false
 	}
-	spec, ok := safeCommands[words[0]]
+	spec, ok := safeCommands[name]
 	if !ok {
 		return false
 	}
-	return spec.match(words[1:])
+	toks, ok := argTokens(c.Args[1:])
+	if !ok {
+		return false
+	}
+	return spec.match(toks)
 }
 
 // safeRedirect returns true for redirects that cannot cause a write (or that
@@ -152,20 +158,84 @@ func safeRedirect(r *syntax.Redirect) bool {
 	}
 }
 
-// literalWords flattens a list of syntax.Word into plain strings, refusing any
-// word that contains a non-literal part (variable expansion, command
-// substitution, process substitution, arithmetic, extglob, etc.). Returns
-// (nil, false) if any word is non-literal.
-func literalWords(ws []*syntax.Word) ([]string, bool) {
-	out := make([]string, 0, len(ws))
+// argTokens classifies each operand word as either a literal value or an opaque
+// "substituted" operand — a quoted `$(...)` whose inner command classifies
+// read-only safe. Returns (nil, false) if any word is neither: a `$VAR`, an
+// unquoted `$(...)`, a process substitution, arithmetic, an extglob, or a quoted
+// substitution whose inner command is not safe. The substituted bit travels with
+// the token into the matchers, which accept it only as a positional and only for
+// an ArgvDataSafe spec.
+func argTokens(ws []*syntax.Word) ([]argToken, bool) {
+	out := make([]argToken, 0, len(ws))
 	for _, w := range ws {
-		s, ok := wordLiteral(w)
-		if !ok {
-			return nil, false
+		if s, ok := wordLiteral(w); ok {
+			out = append(out, argToken{lit: s})
+			continue
 		}
-		out = append(out, s)
+		if wordQuotedSubst(w) {
+			out = append(out, argToken{subst: true})
+			continue
+		}
+		return nil, false
 	}
 	return out, true
+}
+
+// wordQuotedSubst reports whether w is a "quoted-substitution" word: literal text
+// plus one or more `$(...)` command substitutions that appear ONLY inside double
+// quotes, where every substitution's inner command classifies read-only safe. A
+// bare (unquoted) `$(...)`, or any `$VAR` / `$((...))` / `<(...)` / extglob
+// anywhere, makes it not a quoted-substitution word. Requiring double quotes pins
+// the expansion to a single argv operand (no word-splitting, no globbing), so it
+// can never inject extra argv words.
+func wordQuotedSubst(w *syntax.Word) bool {
+	if w == nil {
+		return false
+	}
+	sawSubst := false
+	for _, part := range w.Parts {
+		switch p := part.(type) {
+		case *syntax.Lit, *syntax.SglQuoted:
+			// Literal text outside/inside single quotes — fine.
+		case *syntax.DblQuoted:
+			for _, inner := range p.Parts {
+				switch ip := inner.(type) {
+				case *syntax.Lit:
+					// Literal text within the quotes — fine.
+				case *syntax.CmdSubst:
+					if !classifyCmdSubst(ip) {
+						return false
+					}
+					sawSubst = true
+				default:
+					// ParamExp ($VAR), ArithmExp, ProcSubst, nested quotes, … reject.
+					return false
+				}
+			}
+		default:
+			// Bare (unquoted) CmdSubst, ParamExp, ArithmExp, ProcSubst, ExtGlob.
+			return false
+		}
+	}
+	return sawSubst
+}
+
+// classifyCmdSubst reports whether a `$(...)` command substitution is read-only
+// safe: every inner statement must itself classify safe — the same recursion as a
+// pipe stage or subshell. The mksh `${ …;}` / `${|…;}` forms are rejected.
+func classifyCmdSubst(cs *syntax.CmdSubst) bool {
+	if cs == nil || len(cs.Stmts) == 0 {
+		return false
+	}
+	if cs.TempFile || cs.ReplyVar {
+		return false
+	}
+	for _, st := range cs.Stmts {
+		if !classifyStmt(st) {
+			return false
+		}
+	}
+	return true
 }
 
 // wordLiteral returns the literal string value of a Word if and only if every

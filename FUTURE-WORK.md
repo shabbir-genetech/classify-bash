@@ -11,112 +11,45 @@ through to the normal permission prompt. A bug may fail to accelerate; it must
 never wave through a write/exec/network side effect. Keep that asymmetry in every
 extension below.
 
-Status legend: **APPROVED** (signed off, ready to implement) · **DEFERRED**
-(agreed valuable, parked) · **RESEARCH** (needs investigation before a spec).
+Status legend: **IMPLEMENTED** (shipped) · **APPROVED** (signed off, ready to
+implement) · **DEFERRED** (agreed valuable, parked) · **RESEARCH** (needs
+investigation before a spec).
+
+### Two kinds of "must not allow" (test taxonomy)
+
+The corpus splits fall-through cases by *why* they fall through, because the two
+have opposite regression semantics:
+
+- **`TestMustNotAllow`** — the safety wall. The command, *as written*, would cause
+  a write/exec/network/unverifiable side effect if allowed. A regression here is a
+  security incident.
+- **`TestNotYetAllowed`** — harmless *as written*; falls through only because a
+  classifier feature below isn't built. A regression here (it starts to Allow) is
+  the *expected* result when that feature lands — move the case up to
+  `TestMustAllow`. A case belongs here ONLY if provably harmless; when in doubt it
+  goes in the wall.
+
+When you implement any item below, the acceptance step is the same: the relevant
+`TestNotYetAllowed` cases move to `TestMustAllow`, and you add the new
+`TestMustNotAllow` cases for the unsafe siblings the feature must still reject.
 
 ---
 
-## 1. Command substitution `$(...)` — **APPROVED (v1 pending)**
+## 1. Command substitution `$(...)` — **IMPLEMENTED (v1 — Tier 1)**
 
-### Goal
-Let a whitelisted, read-only command receive an operand produced by `$(...)`
-when the inner command is itself read-only-safe — without weakening allow-only /
-fail-closed. This is the dominant real blocker in the audit log
-(`echo "x $(readlink -f … )"`, `cat "$(… )"`, …).
+Shipped: quoted `"$(...)"` with a read-only inner command, accepted as an opaque
+positional by an `ArgvDataSafe` outer command. The `xargsWrappable` map was
+replaced by the `ArgvDataSafe` field on `commandSpec` (one source of truth), and
+`echo`/`ls`/`readlink`/`basename`/`dirname` were added to it.
 
-### Invariant being changed
-Today *only fully-literal argv reaches a spec* (`wordLiteral`, `classify.go`).
-`$(...)` breaks that two ways:
-
-1. **the inner command executes** — acceptable iff we recursively classify it
-   read-only (identical to a pipe stage); and
-2. **its output becomes an operand** the outer command sees as data we cannot
-   read at classify time — this is **the same stdin→argv hazard** that `xargs`
-   already faces and solves with a curated subset (see DESIGN.md "styleXargs and
-   the stdin-argv hazard").
-
-### Rules (v1 = Tier 1)
-**Word acceptance.** A word is acceptable if it is either:
-
-- **(A) literal** — today's `wordLiteral` (known string), or
-- **(B) quoted-substitution** — parts are `Lit` / `SglQuoted` / `DblQuoted`,
-  where a `DblQuoted` may also contain `CmdSubst` parts, and **every** such
-  `CmdSubst`'s inner statements recursively classify safe via `classifyStmt`.
-
-Still rejected anywhere in a word: `ParamExp` (`$VAR`), `ArithmExp`, `ProcSubst`
-(`<(...)`), `ExtGlob`, and a `CmdSubst` that is **not inside double quotes**
-(bare `$(...)` undergoes word-splitting + globbing → an unknown number of
-injected argv words; quoting pins it to exactly one operand). Decision: **quoted
-only.**
-
-**Spec matching.**
-
-- The command name `words[0]` must be type (A) literal — we must always know
-  which spec applies. `$(echo ls) …` in command position stays rejected.
-- A type-(B) operand is an **opaque positional placeholder**, accepted only by
-  commands carrying the `ArgvDataSafe` property (below). It is **never** matched
-  as a flag, and **never** as a flag's argument.
-- Flag tokens and any `TakesArg` flag arguments must remain type (A) literal.
-  (So `head -n "$(…)" f` and `ls --color="$(…)"` both fall through — the
-  substitution sits in a flag-argument slot.)
-
-### The `ArgvDataSafe` property and the planned refactor
-The curated set of commands that may receive an attacker-controlled argv token
-**already exists** as `xargsWrappable` (`commands.go`): *"a command belongs here
-ONLY if it has NO write/mutate path under ANY argv … those tokens are parsed by
-the wrapped program, including as flags."* That is **bit-for-bit** the property a
-substituted-operand receiver needs. Command substitution is in fact the *smaller*
-surface — `xargs` appends many unseen tokens; a quoted `"$(...)"` injects exactly
-one — so `xargsWrappable ⊆ {safe substituted-operand receivers}`. Reuse it; do
-not invent a parallel list.
-
-**Refactor (fold into v1):** the standalone `xargsWrappable` map duplicates ~20
-command *names* that are already keys in `safeCommands`, and needs a fail-loud
-subset-sync guard (`classifyWrapped`, `spec.go`). Replace the map with an
-**`ArgvDataSafe bool` field on `commandSpec`**. Then:
-
-- one master list (`safeCommands`); the property lives on the spec, names appear
-  once;
-- the subset-sync guard becomes structurally impossible to violate (the bit *is*
-  the spec) and can be deleted;
-- both `matchXargs`/`classifyWrapped` and the new substitution check consult
-  `spec.ArgvDataSafe`.
-
-**Add these to `ArgvDataSafe` (all already in `safeCommands`, all pure readers
-with no write flag):** `echo`, `ls`, `readlink`, `basename`, `dirname`. Side
-benefit: `xargs echo` / `xargs ls` start accelerating too (one property, two
-consumers).
-
-### Hazards and why they're contained
-- **Inner exec** → inner command is fully classified read-only; same as a pipe
-  stage.
-- **Output-as-operand / flag-injection** → the injected value could *look* like a
-  flag (`-rf`, `--out=x`). For an `ArgvDataSafe` command, by definition no flag it
-  honors can cause write/exec/network, so the worst case is "reads/prints
-  something else" — the same information-disclosure surface `cat FILE` already
-  has. Acceptable under the threat model (we guard side effects, not arbitrary
-  read-only output).
-- **Word-splitting** → neutralized by the quoted-only rule (one operand).
-
-### Implementation sketch (contained, ~3 files)
-- **classify.go** — add a sibling to `wordLiteral` validating (B) and recursing
-  into `CmdSubst.Stmts`; `classifyCall` stops being all-or-nothing and classifies
-  each arg as `{value, substituted}`.
-- **spec.go** — the `match*` matchers learn the per-token `substituted` bit: a
-  substituted token is acceptable only as a positional and only when
-  `ArgvDataSafe`; flags and flag-args must be literal. (One signature ripple:
-  `spec.match([]string)` → a small arg-token struct.)
-- **commands.go** — delete `xargsWrappable`, add `ArgvDataSafe: true` to the
-  member specs (+ the five readers above), delete the subset-sync fail-loud.
-
-### Test corpus
-- **mustAllow:** `echo "x $(ls)"`, `echo "$(cat /etc/hostname)"`,
-  `cat "$(readlink -f /a/link)"`, nested `echo "$(head -1 "$(ls)")"`.
-- **mustNotAllow:** bare `echo $(ls)` (splitting); `$(echo ls) -l` (name
-  position); `echo "$(rm x)"` (inner unsafe); `find . -name "$(ls)"` (flag-arg
-  slot + find not `ArgvDataSafe`); `head -n "$(ls)" f` (flag arg);
-  `ls --color="$(ls)"` (flag-arg slot); `sort "$(ls)"` (sort not Tier 1 — see
-  Tier 2).
+The authoritative spec is now **DESIGN.md "Command substitution"** (rules, the
+embedded-vs-separate flag-token asymmetry, hazards) plus the `TestMustAllow` /
+`TestMustNotAllow` / `TestNotYetAllowed` corpus. One implementation finding worth
+flagging here because it corrected the original design: `ls --color="$(ls)"` is a
+single opaque token and **allows** for an `ArgvDataSafe` command (any operand value
+is harmless) — only the *separate-token* `head -n "$(…)"` form falls through on the
+"flag arguments must be literal" rule. The remaining tier (`--` leniency below)
+stays deferred.
 
 ---
 
