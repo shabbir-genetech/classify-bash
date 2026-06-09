@@ -1978,6 +1978,45 @@ func jjSpec() *commandSpec {
 			"show":     {Style: styleGNU, AllowAnyPositional: true, Flags: jjCommonFlags()},
 			"op":       jjOpSpec(),
 			"operation": jjOpSpec(),
+			"bookmark":  jjBookmarkSpec(),
+			"git":       jjGitSpec(),
+		},
+	}
+}
+
+// jjBookmarkSpec whitelists ONLY the read-only `jj bookmark list`. The mutating
+// siblings — set / move / create / rename / delete / forget / track / untrack —
+// all change bookmark state and must fall through to the normal prompt; they are
+// simply absent from the Subcommands map below.
+func jjBookmarkSpec() *commandSpec {
+	listFlags := append(jjCommonFlags(),
+		flagSpec{Short: "a", Long: "all"},
+		flagSpec{Short: "t", Long: "tracked"},
+		flagSpec{Short: "c", Long: "conflicted"},
+		flagSpec{Long: "revisions", TakesArg: true},
+	)
+	return &commandSpec{
+		Style: styleGNU,
+		Subcommands: map[string]*commandSpec{
+			"list": {Style: styleGNU, AllowAnyPositional: true, Flags: listFlags},
+		},
+	}
+}
+
+// jjGitSpec whitelists ONLY the read-only `jj git remote list`. Everything else
+// under `jj git` — push / fetch / clone / import / export, and `remote`
+// add/remove/set-url — mutates local state or hits the network, so it is omitted
+// and falls through.
+func jjGitSpec() *commandSpec {
+	return &commandSpec{
+		Style: styleGNU,
+		Subcommands: map[string]*commandSpec{
+			"remote": {
+				Style: styleGNU,
+				Subcommands: map[string]*commandSpec{
+					"list": {Style: styleGNU, AllowAnyPositional: true, Flags: jjCommonFlags()},
+				},
+			},
 		},
 	}
 }

@@ -161,6 +161,10 @@ func TestMustAllow(t *testing.T) {
 		"jj show",
 		"jj op log",
 		"jj operation log",
+		"jj bookmark list",
+		"jj bookmark list --all",
+		"jj bookmark list -a foo",
+		"jj git remote list",
 
 		// Tier B — nix
 		"nix eval .#packages.x86_64-linux.default.version",
@@ -429,6 +433,13 @@ func TestMustNotAllow(t *testing.T) {
 		"jj rebase",
 		"jj git push",
 		"jj git fetch",
+		"jj bookmark",            // bare: no read-only subcommand
+		"jj bookmark set foo",    // mutating sibling of list
+		"jj bookmark move foo -r @",
+		"jj bookmark delete foo",
+		"jj git remote",          // bare: no read-only subcommand
+		"jj git remote add origin url",
+		"jj git remote remove origin",
 
 		// nix subcommands outside whitelist
 		"nix build .",
