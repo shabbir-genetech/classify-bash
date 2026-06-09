@@ -12,8 +12,9 @@ never wave through a write/exec/network side effect. Keep that asymmetry in ever
 extension below.
 
 Status legend: **IMPLEMENTED** (shipped) · **APPROVED** (signed off, ready to
-implement) · **DEFERRED** (agreed valuable, parked) · **RESEARCH** (needs
-investigation before a spec).
+implement) · **CANDIDATE** (log-surfaced, low-risk, awaiting sign-off) ·
+**DEFERRED** (agreed valuable, parked) · **RESEARCH** (needs investigation before
+a spec).
 
 ### Two kinds of "must not allow" (test taxonomy)
 
@@ -32,6 +33,63 @@ have opposite regression semantics:
 When you implement any item below, the acceptance step is the same: the relevant
 `TestNotYetAllowed` cases move to `TestMustAllow`, and you add the new
 `TestMustNotAllow` cases for the unsafe siblings the feature must still reject.
+
+---
+
+## Observed demand — first log-corpus analysis (2026-06-09)
+
+The opt-in journal sink (`journalctl -t classify-bash`) was read end-to-end for
+the first time on 2026-06-09. This is our first *empirical* signal about which
+fall-throughs actually happen, and it both re-orders the items below and adds
+three new ones (§§5–7). Caveat up front: **121 records, one day, one operator** —
+directional, not a stable rate. Re-run on a larger / multi-user corpus before
+treating the ordering as settled.
+
+### Health signal — clean
+- **All 121 records are `kind:"fallthrough"`; zero `failloud`.** No `failLoud`
+  fired in real traffic: no strict-decoder name-drift (no unrecognized event /
+  `tool_input` field), and no unknown `mvdan/sh` AST node, redirect op, or flag
+  style. The fail-loud surfaces are quiet — nothing is silently going stale.
+- **~99 of 121 genuinely mutate** (commits, pushes, `nix build`/`flake check`, a
+  privileged escalation, `rm`, an interpreter, repo-visibility edits, real `>`
+  writes) and *correctly* fell through. The allow-only invariant held in the wild:
+  nothing side-effecting was accelerated.
+
+### Methodology learning — replay, don't infer
+The first two passes of this analysis drew **wrong** conclusions from regex
+inference (blamed the `cd` prefix, then statement sequencing). Both were refuted
+by replaying the actual lines through the built binary: `cd <literal>`, `command
+-v`, `git` read subcommands (`show`/`log`/`rev-parse`), extended `grep` flags
+(`-rhoE`), `;`/newline sequencing, and literal `"$(...)"` **all already allow**.
+The lesson for the next corpus pass: **classify each candidate by piping it
+through `./result/bin/classify-bash`, not by pattern-matching the string.**
+
+### The real misses (~20 read-only commands), verified by replay
+Of the ~20 records that were read-only yet fell through (an accelerator miss, not
+a safety event), the verified blockers are:
+
+| bucket | what it is | status |
+|--------|------------|--------|
+| **un-whitelisted reader** | `gh` (read subcmds: `api`, `repo view`, `auth status`), `journalctl`, `sed` | coverage gap → new §5 (`gh`/`journalctl`); `sed` is §4 |
+| **`$VAR` expansion** | `T=<literal>; … git show "$T:f"` — a *locally-assigned literal*, not `read`-bound | refines §3 → new §6 |
+| **`for` loop** | `for f in <literal words>; do <read with $f>; done` | §3 is `while`-only → new §7 |
+
+The dominant real idiom is interactive investigation: `cd` to a literal dir, then
+a sequence of `echo "=== label ==="` interleaved with read-only `grep` / `git
+show` / `sed`, frequently parameterized by a variable holding a literal commit
+hash. Two sub-blockers stack in that idiom — the assignment-only statement
+(`T=…`) is itself rejected (`classifyCall` drops any stmt with `Assigns`), *and*
+the later `$T` expansion is rejected by `wordLiteral`. §6 must clear both.
+
+### What this says about the existing roadmap
+- **Tier-2 `--` leniency (§2) and the `sed` parser (§4) unlock ≈0 of the observed
+  misses.** `sed` appeared only as `sed -i` (write) or buried inside an
+  already-rejected pipeline — confirming §4's first-principles "ROI ≈ 0" call,
+  now with data. Leave both deferred.
+- The cheap, high-frequency wins are the un-whitelisted readers (§5) and the
+  literal-`$VAR` / literal-`for` pair (§6 → §7). None is approved yet — they need
+  the usual design-first sign-off — but the log says they would retire the bulk of
+  real read-only misses.
 
 ---
 
@@ -54,6 +112,10 @@ stays deferred.
 ---
 
 ## 2. Command substitution Tier 2: `--` leniency — **DEFERRED (v2)**
+
+> **Log evidence (2026-06-09):** 0 observed demand in the first corpus — no
+> fall-through would have been rescued by `--` leniency. Stays deferred; revisit
+> only if real `sort -- "$(…)"`-shaped traffic appears.
 
 ### Idea
 A literal `--` tells a getopt-style command "everything after is positional, not
@@ -144,6 +206,11 @@ not DoS).
 
 ## 4. `sed` parser — **DEFERRED / on-demand (RESEARCH)**
 
+> **Log evidence (2026-06-09):** confirms "ROI ≈ 0". In the first corpus `sed`
+> showed up only as `sed -i` (write — correctly rejected) or inside an
+> already-rejected pipeline; no read-only `sed` line fell through *because of sed
+> itself*. Demand bar for building this is unmet.
+
 ### Feasibility
 Doable by direct analogy to `awk.go` (`classifyAwkProgram` positively
 whitelists awk AST nodes via the goawk fork): parse the sed script, walk it, and
@@ -171,6 +238,116 @@ unrecognized.
   hand-rolling a formal sed-subset grammar.
 - Settle the `r`/`R` (file-read) policy against the precedent that `awk FILE` and
   `cat FILE` already read arbitrary literal paths.
+
+---
+
+## 5. `journalctl` and `gh` read subcommands — **CANDIDATE (log-driven, 2026-06-09)**
+
+Pure whitelist coverage, no new classifier feature — the highest-hit-rate, lowest-
+risk items the first corpus surfaced. These are *extend-the-whitelist* tasks
+(README "Extending the whitelist"), not research; they still want design-first
+sign-off and the usual `mustAllow` + wall (`mustNotAllow`) cases.
+
+- **`journalctl`** — a pure reader; no write/exec/network path. The observed uses
+  are `journalctl -t <tag> --no-pager [-o cat]`. Straightforward `styleGNU` spec.
+  Watch the corners that are *not* read-only and must stay off the flag list:
+  `--flush`, `--rotate`, `--vacuum-*`, `--setup-keys`, `--update-catalog`, and the
+  `--output=` variants that can shell out. Default-deny flags; enumerate only the
+  read/query ones (`-t/--identifier`, `-u/--unit`, `-n/--lines`, `--since`,
+  `--until`, `--no-pager`, `-o/--output` restricted to safe formatters, `-g/--grep`,
+  `-r/--reverse`, `-k/--dmesg`-style read filters).
+- **`gh`** — *not* a pure reader: it has heavy mutate/network-write subcommands
+  (`repo edit`, `pr create|merge|close`, `release create`, `api` with `-X POST…`).
+  Whitelist it the way `jj` is whitelisted: **per-subcommand**, allowing only the
+  read forms seen in the corpus — `gh auth status`, `gh repo view`, and the
+  read-only slice of `gh api` (GET only; reject `-X/--method` ≠ GET and `-f/--field`
+  writes). `gh api` is the sharp edge — a substituted/elevated method turns a
+  "read" into a write, so treat any non-GET as fall-through and keep `api` off
+  `ArgvDataSafe`.
+
+Acceptance: the relevant `journalctl … ` / `gh repo view …` lines move into
+`TestMustAllow`; add `TestMustNotAllow` for `journalctl --vacuum-size=1G`,
+`gh repo edit … --visibility public`, `gh api … -X POST`, etc.
+
+---
+
+## 6. `$VAR` expansion for locally-assigned literals — **RESEARCH (refines §3)**
+
+### Idea
+The single biggest *structural* blocker in the first corpus. The real idiom is
+
+```
+T=24e0610d
+git show "$T:app/x.php"
+```
+
+— a variable **assigned a literal earlier in the same compound command**, then
+expanded as data. This is a strictly smaller and safer slice of §3's taint problem
+than the `while read VAR` case: a locally-assigned literal is **not** attacker-
+controlled (no stdin → argv), so it sidesteps the stdin-argv hazard entirely.
+
+### Two sub-blockers must both clear
+1. **The assignment statement itself is rejected.** `classifyCall` drops any stmt
+   with `len(c.Assigns) > 0` (env mutation we don't auto-allow). A literal-only
+   assignment (`T=24e0610d`, RHS classifies via `wordLiteral`) would need to become
+   a recognized, side-effect-free statement that *binds a name to a literal* in a
+   per-invocation symbol table.
+2. **The expansion is rejected.** `wordLiteral` (and `argTokens`) reject every
+   `ParamExp`. The classifier would have to resolve `$T` against that symbol table
+   and treat it as the literal it was bound to — failing closed on any name not
+   bound to a literal in this same parse (no env, no `read`, no `$(...)`-assigned
+   value unless that value is itself argv-data-safe).
+
+### Why it's safe in this closed form
+The value is known at classify time (it came from a literal in the same string),
+so it is exactly as safe as writing the literal inline. The danger is scope creep:
+the moment a tracked var can be bound from `read`, `$(...)`, or the environment, we
+are back in full §3 taint-tracking and the `ArgvDataSafe` reasoning must apply to
+*variable* expansion, not just command substitution. Keep v1 to **literal-bound
+names only**.
+
+### Open research before implementing
+- The symbol-table model: scope (per `*syntax.File`? per compound command?),
+  shadowing, and re-assignment. Confirm `mvdan/sh` gives assignment nodes and
+  expansion sites cleanly enough to thread a binding through.
+- Default-closed behavior for every unbound or non-literal-bound `$VAR`.
+- Acceptance: `T=…; git show "$T:f"` and `echo "$T"` move to `TestMustAllow`;
+  `read T; echo "$T"`, `T=$(…); rm "$T"`, and bare `$HOME`/`$PATH` stay in
+  `TestMustNotAllow` (or `TestNotYetAllowed` only where provably harmless).
+
+---
+
+## 7. `for X in <literal words>; do <read body>; done` — **RESEARCH (depends on §6)**
+
+### Idea
+`for`-loops appeared in the corpus over **literal word lists** with read-only
+bodies (`for f in a.php b.php; do git show "HEAD:$f"; done`). A loop over a fixed
+literal list whose body classifies safe is "safe things, repeated" — the same
+defensibility argument §3 makes for `while`, but *without* the `while read` taint
+problem because the iteration values are literals in the source.
+
+### Why it depends on §6
+`classify.go` rejects `*syntax.ForClause` outright (line ~83). Opening that gate is
+only half the work: every realistic body references the loop variable `$X`, which
+is a `ParamExp` and falls through today. So §7 needs §6's symbol-table machinery,
+extended to **bind the loop variable to each literal word in turn** — the loop
+classifies allow iff the word list is all literals *and* the body classifies safe
+with `$X` bound to a literal.
+
+### Scope guard (whitelist, not blacklist)
+- Word list must be **all literals** — reject `for f in *` (glob), `for f in
+  $(…)` (cmdsubst), `for f in $LIST` (var). A glob/cmdsubst list reintroduces
+  attacker-controllable iteration values.
+- Body recurses through the existing classifier with `$X` bound; no special-casing.
+- `while`, `until`, C-style `for ((;;))`, and infinite forms stay rejected (§3 and
+  the DoS note there still apply).
+
+### Open research before implementing
+- Whether to land §6 first and treat §7 as "§6 + bind loop var", or design them
+  together (the symbol-table is shared).
+- Acceptance: `for f in a b; do echo "$f"; done` and the literal-list `git show`
+  form move to `TestMustAllow`; `for f in *`, `for f in $(ls)`, and any write/exec
+  body stay in `TestMustNotAllow`.
 
 ---
 

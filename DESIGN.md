@@ -163,6 +163,18 @@ never whitelistable), so each pass appends a tail of near-duplicate self-referen
 records. Expect them, and read the *substantive* fall-throughs as the ones that predate
 your current session.
 
+The hard-won method note from the first full corpus pass (2026-06-09): **classify
+each candidate by piping it through `./result/bin/classify-bash`, never by
+regex-matching the log string.** That pass twice blamed the wrong construct (the
+`cd` prefix, then statement sequencing) from string inference alone; replay refuted
+both — `cd <literal>`, `command -v`, `git` read subcommands, extended `grep` flags,
+`;`/newline sequencing, and literal `"$(...)"` already allow. It is the same
+"already covered" trap above, one level up: the blocker is almost never the command
+your eye lands on. The findings and the resulting re-prioritization (un-whitelisted
+`gh`/`journalctl` readers; literal-`$VAR` and literal-`for` as the real structural
+levers; Tier-2 `--` and a `sed` parser confirmed ≈0 demand) live in
+[FUTURE-WORK.md](FUTURE-WORK.md) "Observed demand".
+
 ## AST handling (`classifyCmd`)
 
 The shell command is parsed with `mvdan.cc/sh/v3/syntax`. Compound forms are
