@@ -25,8 +25,11 @@ allow-except-list would wave it through. A positive list fails closed instead.
 - **A — no-subcommand reads** (`cat`, `ls`, `grep`, `cd`) plus stdout-only
   filters (`tr`, `cut`, `sort`, `uniq`, `paste`): `styleGNU`, `AllowAnyPositional`,
   no write flags.
-- **B — command + subcommand** (`git status`/`log`, `jj`, `nix eval`,
-  `docker ps`, `systemctl status`): `styleGNU` + `Subcommands` dispatch.
+- **B — command + subcommand** (`git status`/`log`, `jj log`/`bookmark list`,
+  `nix eval`, `docker ps`, `systemctl status`): `styleGNU` + `Subcommands`
+  dispatch. A nested namespace exposes only its read-only leaves — `jj git`
+  whitelists `remote list` but not `push`/`fetch`; `jj bookmark` whitelists `list`
+  but not `set`/`move`/`delete`.
 - **C — flag-aware dual-use** (`find`): `styleFind`.
 - **D — transparent wrappers** (`devenv shell --`, `nix shell PKGS --`):
   `styleWrapper`. The literal `--` is REQUIRED; the tail after it is looked up in
@@ -122,6 +125,30 @@ spot, so `main` never regains control; to let it record a `failloud` line it rea
 two package-level globals (`logCfg`, `currentCommand`) that `main` populates as
 soon as they are known. Both stay zero until then, so any early `failLoud` simply
 logs nothing.
+
+**Reading the log: not every fall-through is a candidate.** The log answers "what
+failed to accelerate," not "what *should* have." A fall-through is only a miss if
+the command is genuinely read-only; a side-effecting command falling through to a
+one-keystroke prompt is the *correct* outcome, and whitelisting it would trade that
+confirmation for a real regression. The healthy signal to look for first is the
+*absence* of `failloud` records — those mean classifier staleness (an unknown AST
+node or a harness field the decoder rejects), and they block calls. Fall-throughs
+do not. When triaging the fall-throughs, three buckets recur (a 2026-06 pass over
+the journal hit all three):
+
+- *Whitelist it* — read-only and recurring. That pass added `jj bookmark list` and
+  `jj git remote list` (read-only leaves of otherwise-mutating namespaces).
+- *Leave it* — mutates state, touches the network, or runs arbitrary code, however
+  benign it looks in the log. The pass deliberately rejected `jj git fetch` (network
+  fetch; moves remote-tracking bookmarks, a `.jj/` write — a force-pushed remote
+  becomes a bookmark *conflict*, not silent loss, but still a write), `nix flake
+  lock` (rewrites `flake.lock`, fetches to resolve revs), and `nix develop --command
+  CMD` (an execution wrapper — a "Deferred wrapper shape" below — that runs arbitrary
+  commands and would breach allow-only outright).
+- *Already covered* — the blocker was elsewhere in the same pipe/list, not the
+  command you noticed. The pass nearly re-added `grep`, which has had a full spec all
+  along; the real blockers on those lines were `jj bookmark` and a non-whitelisted
+  `sed`. Confirm against `commands.go` before adding.
 
 ## AST handling (`classifyCmd`)
 
