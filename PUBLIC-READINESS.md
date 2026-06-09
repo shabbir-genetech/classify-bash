@@ -59,6 +59,11 @@ pass): author identity is the demo placeholder across all commits, and
 - **Module path — done:** `go.mod` is `github.com/shabbir-genetech/classify-bash`,
   so `go install github.com/shabbir-genetech/classify-bash@latest` works once the
   repo is public.
+- **Third-party licenses — done:** the only linked deps are goawk (MIT © Ben Hoyt
+  — the fork retained the notice) and mvdan/sh (BSD-3-Clause © Daniel Martí), both
+  permissive and compatible with our MIT. `THIRD_PARTY_LICENSES` reproduces their
+  notices for binary redistribution, and `nix flake check`'s `checks.licenses`
+  (`go-licenses check`) fails if a future copyleft dependency sneaks in.
 - Skim `git log --oneline` for any commit subject/body that reveals private
   context. (Spot-checked clean from the jj copy — all subjects are generic.)
 - Confirm `README.md`, `DESIGN.md`, and this file contain no internal hostnames or

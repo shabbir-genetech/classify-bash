@@ -68,12 +68,19 @@ permission flow would have stopped. Preserve that asymmetry.
 ## Build / test
 
 ```bash
-nix develop          # dev shell: go, gopls, gotools, delve
+nix develop          # dev shell: go, gopls, gotools, delve, go-licenses
 go test ./...        # the classifier corpus (TestMustAllow / TestMustNotAllow / TestEventDecode*)
 go test -run TestMustNotAllow ./...   # a single test function
-nix flake check      # runs that corpus as a flake check — MUST pass before trusting a change
+nix flake check      # runs 2 checks: the corpus (checks.tests) AND a permissive-
+                     # license guard (checks.licenses, go-licenses check) — MUST pass
 nix build            # build the binary as a Nix derivation -> ./result/bin/classify-bash
+./scripts/gen-third-party-licenses.sh  # regenerate THIRD_PARTY_LICENSES (in nix develop)
 ```
+
+`checks.licenses` fails if any linked dependency carries a non-permissive
+(e.g. copyleft) license. `THIRD_PARTY_LICENSES` reproduces the bundled deps'
+notices for binary redistribution; it is generated, not hand-edited — rerun the
+script above when dependencies change.
 
 The test corpus is the spec: `TestMustAllow` (forms that must classify allow),
 `TestMustNotAllow` (forms that must fall through), and `TestEventDecode*` (the

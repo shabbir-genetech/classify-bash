@@ -85,6 +85,11 @@ nix build
 nix flake check
 ```
 
+`nix flake check` runs two checks: the test corpus and a `go-licenses` guard that
+fails on any non-permissive dependency license. `THIRD_PARTY_LICENSES` — generated
+by `scripts/gen-third-party-licenses.sh` — reproduces the bundled dependencies'
+notices (goawk/MIT, mvdan/sh/BSD-3-Clause) for **binary** redistribution.
+
 ### Without Nix
 
 It is a plain Go module — no Nix required to build or install:

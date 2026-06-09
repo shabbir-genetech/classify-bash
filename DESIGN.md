@@ -235,3 +235,11 @@ a stdlib import, sanity-check with `GOOS=windows go build ./...` and `GOOS=darwi
 go build ./...` — they need no C toolchain and catch exactly the regression the
 gates miss. (That is why the journal sink is build-tagged; see "Logging
 non-allowed commands".)
+
+**The license check runs hermetically.** `checks.licenses` runs `go-licenses
+check ./...` in the no-network sandbox, and it works because `go mod vendor`
+preserves each dependency's `LICENSE` file — go-licenses reads them from the
+vendored tree under `-mod=vendor`. (`go-licenses report` additionally warns it
+cannot compute license *URLs* offline; that is cosmetic — `check` only needs the
+local license text.) The bundled-notice file is generated, not the check's job:
+rerun `scripts/gen-third-party-licenses.sh` when dependencies change.
