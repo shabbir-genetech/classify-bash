@@ -1201,10 +1201,12 @@ var safeCommands = map[string]*commandSpec{
 	"nix":       nixSpec(),
 	"docker":    dockerSpec(),
 	"systemctl": systemctlSpec(),
+	"gh":        ghSpec(),
 
 	// === Tier C: flag-aware dual-use =====================================
 
-	"find": findSpec(),
+	"find":       findSpec(),
+	"journalctl": journalctlSpec(),
 
 	// === Tier D: transparent wrappers (recursive classification) =========
 	// These commands exec the argv after a literal `--` separator. The tail
@@ -2292,5 +2294,118 @@ func systemctlReadSpec() *commandSpec {
 			{Short: "h", Long: "help"},
 		},
 		AllowAnyPositional: true,
+	}
+}
+
+// journalctlSpec whitelists journalctl as a read-only journal query tool. It is a
+// pure reader EXCEPT for management flags that write or delete journal state; those
+// are deliberately left off Flags (so they fall through), never enumerated as a
+// deny-list.
+//
+// AllowAnyPositional is deliberately FALSE — and this is load-bearing for safety,
+// not just a scope choice. journalctl carries destructive flags (--vacuum-size,
+// --rotate, …). matchGNU treats every token after the first positional as opaque
+// data (it does not re-validate flag-shaped tokens once positionals open), but the
+// real journalctl still parses an interspersed `--vacuum-size=1G` and deletes logs.
+// So a spec that both allowed a positional match AND had a destructive flag would
+// wave that flag through. We close the hole by accepting NO positional: with no
+// positional to open the gate, an unwhitelisted flag like --vacuum-size is always
+// rejected. The cost is positional field-matches (`journalctl _SYSTEMD_UNIT=foo`,
+// `journalctl /usr/bin/foo`) fall through — none appear in observed use; they are
+// deferred in TestNotYetAllowed. (Supporting them safely needs the post-positional
+// flag-validation engine work in FUTURE-WORK.md §8.)
+//
+// Deliberately excluded (must keep falling through): --vacuum-size, --vacuum-time,
+// --vacuum-files (delete journals), --rotate, --flush, --sync, --relinquish-var,
+// --smart-relinquish-var, --setup-keys, --update-catalog, --verify; the streaming
+// -f/--follow (never terminates — see TestNotYetAllowed); and the alternate-location
+// readers -D/--directory, --file, --root, -M/--machine, --namespace (deferred, D3).
+func journalctlSpec() *commandSpec {
+	return &commandSpec{
+		Style: styleGNU,
+		Flags: []flagSpec{
+			{Short: "t", Long: "identifier", TakesArg: true},
+			{Short: "u", Long: "unit", TakesArg: true},
+			{Long: "user-unit", TakesArg: true},
+			{Short: "n", Long: "lines", TakesArg: true},
+			{Short: "S", Long: "since", TakesArg: true},
+			{Short: "U", Long: "until", TakesArg: true},
+			{Short: "p", Long: "priority", TakesArg: true},
+			{Short: "g", Long: "grep", TakesArg: true},
+			{Long: "case-sensitive", OptionalArg: true},
+			{Short: "b", Long: "boot", OptionalArg: true},
+			{Short: "k", Long: "dmesg"},
+			{Short: "o", Long: "output", TakesArg: true},
+			{Long: "output-fields", TakesArg: true},
+			{Short: "r", Long: "reverse"},
+			{Short: "e", Long: "pager-end"},
+			{Short: "x", Long: "catalog"},
+			{Short: "a", Long: "all"},
+			{Short: "q", Long: "quiet"},
+			{Short: "m", Long: "merge"},
+			{Long: "utc"},
+			{Long: "no-pager"},
+			{Long: "no-tail"},
+			{Long: "no-full"},
+			{Long: "no-hostname"},
+			{Short: "N", Long: "fields"},
+			{Short: "F", Long: "field", TakesArg: true},
+			{Long: "list-boots"},
+			{Long: "header"},
+			{Long: "disk-usage"},
+			{Long: "version"},
+			{Short: "h", Long: "help"},
+		},
+	}
+}
+
+// ghSpec whitelists the GitHub CLI as a read-only tool, modeled on gitSpec(): a
+// per-subcommand whitelist where only no-write subcommands appear. gh is heavily
+// network-write-capable (repo edit, pr/issue/release create|merge|close, api with
+// -X POST), so the Subcommands map is the gate — every mutating subcommand is simply
+// absent and falls through. NOT ArgvDataSafe at any level: gh can write over the
+// network, so it must never receive an opaque token.
+//
+// v1 ships ONLY `gh auth status`. The signed-off scope also included `gh repo view`
+// and `gh api` (GET-only), but both require a positional (the OWNER/REPO or the API
+// endpoint), and matchGNU swallows any flag-shaped token after a positional as data
+// without re-validating it — so `gh repo view o/r --web` (browser launch) and
+// `gh api repos/o/r -X POST` (network write) would be ALLOWED. Whitelist-only cannot
+// close that vector here; it needs the post-positional flag-validation engine work
+// in FUTURE-WORK.md §8. Until then those two are absent (they fall through) and live
+// in TestNotYetAllowed.
+func ghSpec() *commandSpec {
+	return &commandSpec{
+		Style: styleGNU,
+		Subcommands: map[string]*commandSpec{
+			"auth": ghAuthSpec(),
+		},
+	}
+}
+
+// ghAuthSpec whitelists ONLY `gh auth status`. The mutating / secret-exposing
+// siblings — login, logout, refresh, setup-git, and `token` (prints the auth token)
+// — are absent and fall through.
+func ghAuthSpec() *commandSpec {
+	return &commandSpec{
+		Style: styleGNU,
+		Subcommands: map[string]*commandSpec{
+			"status": ghAuthStatusSpec(),
+		},
+	}
+}
+
+// ghAuthStatusSpec is the read-only `gh auth status`. It takes no positional and has
+// no dangerous flag, so it is safe under the current engine (an unknown flag or any
+// positional falls through). Deliberately excluded: -t/--show-token (prints the auth
+// token — secret disclosure).
+func ghAuthStatusSpec() *commandSpec {
+	return &commandSpec{
+		Style: styleGNU,
+		Flags: []flagSpec{
+			{Short: "h", Long: "hostname", TakesArg: true},
+			{Short: "a", Long: "active"},
+			{Long: "help"},
+		},
 	}
 }

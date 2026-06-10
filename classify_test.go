@@ -307,6 +307,18 @@ func TestMustAllow(t *testing.T) {
 		"echo \"`ls`\"",                         // backquote spelling of $(...), read-only inner
 		`echo "$(ls && cat /etc/hostname)"`,     // compound inner, every stage read-only
 		`echo "$(cat /etc/hostname | head -1)"`, // inner pipeline, every stage whitelisted
+
+		// journalctl: read-only journal queries (flag-only — see journalctlSpec).
+		"journalctl -t classify-bash --no-pager",
+		"journalctl -t classify-bash -o cat",
+		"journalctl -u sshd -n 50 --no-pager",
+		"journalctl --since 2026-06-09 -r",
+		"journalctl", // bare: dump to pager, read-only
+
+		// gh: read-only `gh auth status` (v1 scope — see ghSpec).
+		"gh auth status",
+		"gh auth status --active",
+		"gh auth status --hostname github.com",
 	}
 	for _, c := range cases {
 		if got := classifyCommand(c); got != decisionAllow {
@@ -588,6 +600,34 @@ func TestMustNotAllow(t *testing.T) {
 		`echo "$(ls)$(rm x)"`,               // two substitutions in one word, one unsafe
 		`sort --output="$(ls)"`,             // substituted value feeds a write flag → write
 		`cat "$(ls)" > /etc/passwd`,         // redirect write not masked by the substitution
+
+		// journalctl — destructive / management flags must keep falling through. The
+		// `<match> --vacuum-size` forms guard the post-positional-flag hazard that is
+		// exactly why journalctlSpec sets AllowAnyPositional=false.
+		"journalctl --vacuum-size=1G",         // deletes journal files
+		"journalctl --vacuum-time=1d",         // deletes journal files
+		"journalctl --rotate",                 // rotates journals (write)
+		"journalctl --flush",                  // flushes /run journal to /var (write)
+		"journalctl --sync",                   // write
+		"journalctl --update-catalog",         // rebuilds catalog (write)
+		"journalctl --setup-keys",             // writes FSS key material
+		"journalctl _SYSTEMD_UNIT=x --rotate", // positional must not open a trailing write flag
+		"journalctl /usr/bin/foo --vacuum-size=1G",
+
+		// gh — mutating / secret-exposing / not-yet-safe forms must fall through.
+		"gh auth login",                        // network + credential write
+		"gh auth logout",                       // mutate
+		"gh auth refresh",                      // mutate
+		"gh auth token",                        // prints the auth token (secret)
+		"gh auth status --show-token",          // prints the auth token (secret)
+		"gh repo edit o/r --visibility public", // network write
+		"gh repo delete o/r",                   // network write
+		"gh repo create o/r",                   // network write
+		"gh pr create -t x",                    // network write
+		"gh pr merge 1",                        // network write
+		"gh api repos/o/r -X POST",             // network write (api not whitelisted in v1)
+		"gh api repos/o/r -f name=x",           // network write
+		"gh repo view o/r --web",               // browser launch (repo view not whitelisted in v1)
 	}
 	for _, c := range cases {
 		if got := classifyCommand(c); got != decisionFallThrough {
@@ -644,6 +684,20 @@ func TestNotYetAllowed(t *testing.T) {
 		"sed -n '1,10p' file", // print a line range to stdout
 		"sed 's/a/b/' file",   // substitute to stdout (no -i)
 		"tar -tf archive.tar", // list archive contents
+
+		// journalctl read-only forms deferred for safety, not danger:
+		"journalctl -f",                 // follow: read-only but never terminates; -f excluded for v1
+		"journalctl _SYSTEMD_UNIT=sshd", // positional field-match; needs §8 (no AllowAnyPositional today)
+		"journalctl /usr/bin/foo",       // positional path match; ditto
+
+		// gh read-only forms blocked only by the post-positional-flag hazard (§8):
+		// these are harmless GETs as written, but matchGNU can't reject a trailing
+		// `--web` / `-X POST` once the positional opens, so they wait for §8.
+		"gh repo view o/r",                   // read; needs §8 before the OWNER/REPO positional is safe
+		"gh repo view o/r --json visibility", // read
+		"gh api repos/o/r --jq .visibility",  // GET read; needs §8 to bar a trailing -X POST
+		"gh pr view 123",                     // read subcommand outside v1 observed-only scope
+		"gh issue list",                      // read subcommand outside v1 observed-only scope
 	}
 	for _, c := range cases {
 		if got := classifyCommand(c); got != decisionFallThrough {
