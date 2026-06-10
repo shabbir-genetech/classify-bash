@@ -56,8 +56,14 @@ type flagSpec struct {
 //   - A `--` token ends flag parsing; subsequent args are positional.
 //   - The first non-flag arg either selects a Subcommand (if Subcommands is
 //     non-nil) or marks the start of positionals.
-//   - Flags after the first positional are NOT accepted (positionals "close"
-//     the flag section). Strict, but matches typical safe-use patterns.
+//   - The first positional "closes" the flag section: every token after it is
+//     taken as a positional, including flag-shaped ones. So `cat file -X` accepts
+//     `-X` as DATA, not as a validated flag. This is safe ONLY because every
+//     AllowAnyPositional command has no dangerous flag for a swallowed token to
+//     trigger; a reader whose write/exec path is a flag (gh's `--web`/`-X`,
+//     journalctl's `--vacuum-*`) must therefore NOT set AllowAnyPositional, or its
+//     dangerous flag could ride in after the positional. Validating post-positional
+//     flags (GNU getopt permutation) is FUTURE-WORK.md §8.
 //   - If Subcommands is non-nil and no subcommand is selected, fall through.
 //   - If Subcommands is nil and AllowAnyPositional is false, any positional
 //     causes fall-through.
