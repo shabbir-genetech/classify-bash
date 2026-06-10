@@ -308,17 +308,34 @@ func TestMustAllow(t *testing.T) {
 		`echo "$(ls && cat /etc/hostname)"`,     // compound inner, every stage read-only
 		`echo "$(cat /etc/hostname | head -1)"`, // inner pipeline, every stage whitelisted
 
-		// journalctl: read-only journal queries (flag-only — see journalctlSpec).
+		// journalctl: read-only journal queries.
 		"journalctl -t classify-bash --no-pager",
 		"journalctl -t classify-bash -o cat",
 		"journalctl -u sshd -n 50 --no-pager",
 		"journalctl --since 2026-06-09 -r",
 		"journalctl", // bare: dump to pager, read-only
+		// §8: positional field-matches now allowed (permutation still rejects a
+		// trailing destructive flag — see TestMustNotAllow).
+		"journalctl _SYSTEMD_UNIT=sshd",
+		"journalctl /usr/bin/foo",
+		"journalctl _SYSTEMD_UNIT=sshd -n 20 --no-pager", // positional then valid flags
 
-		// gh: read-only `gh auth status` (v1 scope — see ghSpec).
+		// gh: read-only subcommands.
 		"gh auth status",
 		"gh auth status --active",
 		"gh auth status --hostname github.com",
+		// §8: gh repo view / gh api (GET) — positional + flags validated by permutation.
+		"gh repo view o/r",
+		"gh repo view o/r --json visibility",
+		"gh repo view o/r --json name -q .name",
+		"gh repo view --json name o/r", // flag before positional, too
+		"gh api repos/o/r --jq .visibility",
+		"gh api repos/o/r --paginate",
+
+		// §8 permutation guard: a *whitelisted* flag after a positional still allows
+		// (no regression for the common "flag after a revision/arg" idiom).
+		"git log HEAD -p",
+		"git show HEAD --stat",
 	}
 	for _, c := range cases {
 		if got := classifyCommand(c); got != decisionAllow {
@@ -614,7 +631,7 @@ func TestMustNotAllow(t *testing.T) {
 		"journalctl _SYSTEMD_UNIT=x --rotate", // positional must not open a trailing write flag
 		"journalctl /usr/bin/foo --vacuum-size=1G",
 
-		// gh — mutating / secret-exposing / not-yet-safe forms must fall through.
+		// gh — mutating / secret-exposing forms must fall through.
 		"gh auth login",                        // network + credential write
 		"gh auth logout",                       // mutate
 		"gh auth refresh",                      // mutate
@@ -625,9 +642,13 @@ func TestMustNotAllow(t *testing.T) {
 		"gh repo create o/r",                   // network write
 		"gh pr create -t x",                    // network write
 		"gh pr merge 1",                        // network write
-		"gh api repos/o/r -X POST",             // network write (api not whitelisted in v1)
-		"gh api repos/o/r -f name=x",           // network write
-		"gh repo view o/r --web",               // browser launch (repo view not whitelisted in v1)
+		// §8 permutation must reject a dangerous flag AFTER the endpoint/repo
+		// positional — the whole point of the engine change.
+		"gh api repos/o/r -X POST",              // network write
+		"gh api repos/o/r -f name=x",            // field write
+		"gh api repos/o/r --paginate -X DELETE", // valid flag, then write flag after positional
+		"gh repo view o/r --web",                // browser launch (exec)
+		"gh repo view o/r --json name --web",    // valid flag, then --web after positional
 	}
 	for _, c := range cases {
 		if got := classifyCommand(c); got != decisionFallThrough {
@@ -685,19 +706,12 @@ func TestNotYetAllowed(t *testing.T) {
 		"sed 's/a/b/' file",   // substitute to stdout (no -i)
 		"tar -tf archive.tar", // list archive contents
 
-		// journalctl read-only forms deferred for safety, not danger:
-		"journalctl -f",                 // follow: read-only but never terminates; -f excluded for v1
-		"journalctl _SYSTEMD_UNIT=sshd", // positional field-match; needs §8 (no AllowAnyPositional today)
-		"journalctl /usr/bin/foo",       // positional path match; ditto
+		// journalctl follow: read-only but never terminates; -f excluded for v1.
+		"journalctl -f",
 
-		// gh read-only forms blocked only by the post-positional-flag hazard (§8):
-		// these are harmless GETs as written, but matchGNU can't reject a trailing
-		// `--web` / `-X POST` once the positional opens, so they wait for §8.
-		"gh repo view o/r",                   // read; needs §8 before the OWNER/REPO positional is safe
-		"gh repo view o/r --json visibility", // read
-		"gh api repos/o/r --jq .visibility",  // GET read; needs §8 to bar a trailing -X POST
-		"gh pr view 123",                     // read subcommand outside v1 observed-only scope
-		"gh issue list",                      // read subcommand outside v1 observed-only scope
+		// gh read subcommands not in the whitelisted set (pr/issue not added yet).
+		"gh pr view 123",
+		"gh issue list",
 	}
 	for _, c := range cases {
 		if got := classifyCommand(c); got != decisionFallThrough {

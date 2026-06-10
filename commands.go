@@ -2302,18 +2302,15 @@ func systemctlReadSpec() *commandSpec {
 // are deliberately left off Flags (so they fall through), never enumerated as a
 // deny-list.
 //
-// AllowAnyPositional is deliberately FALSE — and this is load-bearing for safety,
-// not just a scope choice. journalctl carries destructive flags (--vacuum-size,
-// --rotate, …). matchGNU treats every token after the first positional as opaque
-// data (it does not re-validate flag-shaped tokens once positionals open), but the
-// real journalctl still parses an interspersed `--vacuum-size=1G` and deletes logs.
-// So a spec that both allowed a positional match AND had a destructive flag would
-// wave that flag through. We close the hole by accepting NO positional: with no
-// positional to open the gate, an unwhitelisted flag like --vacuum-size is always
-// rejected. The cost is positional field-matches (`journalctl _SYSTEMD_UNIT=foo`,
-// `journalctl /usr/bin/foo`) fall through — none appear in observed use; they are
-// deferred in TestNotYetAllowed. (Supporting them safely needs the post-positional
-// flag-validation engine work in FUTURE-WORK.md §8.)
+// AllowAnyPositional is TRUE: positionals are field matches (`_SYSTEMD_UNIT=foo`)
+// or executable paths — read filters. This is safe under §8 getopt permutation:
+// because journalctl is NOT ArgvDataSafe, matchGNU keeps validating flags even
+// after a positional, so an interspersed `journalctl _SYSTEMD_UNIT=x --vacuum-size`
+// still rejects the unwhitelisted `--vacuum-size` and falls through. (Before §8,
+// matchGNU swallowed post-positional flags as data, so this spec had to set
+// AllowAnyPositional=false to stay safe; §8 lifted that restriction.) ArgvDataSafe
+// stays FALSE precisely because the destructive path is a flag — same `sort -o`
+// reasoning — so journalctl must never receive an opaque, flag-shaped operand.
 //
 // Deliberately excluded (must keep falling through): --vacuum-size, --vacuum-time,
 // --vacuum-files (delete journals), --rotate, --flush, --sync, --relinquish-var,
@@ -2322,7 +2319,8 @@ func systemctlReadSpec() *commandSpec {
 // readers -D/--directory, --file, --root, -M/--machine, --namespace (deferred, D3).
 func journalctlSpec() *commandSpec {
 	return &commandSpec{
-		Style: styleGNU,
+		Style:              styleGNU,
+		AllowAnyPositional: true,
 		Flags: []flagSpec{
 			{Short: "t", Long: "identifier", TakesArg: true},
 			{Short: "u", Long: "unit", TakesArg: true},
@@ -2366,19 +2364,19 @@ func journalctlSpec() *commandSpec {
 // absent and falls through. NOT ArgvDataSafe at any level: gh can write over the
 // network, so it must never receive an opaque token.
 //
-// v1 ships ONLY `gh auth status`. The signed-off scope also included `gh repo view`
-// and `gh api` (GET-only), but both require a positional (the OWNER/REPO or the API
-// endpoint), and matchGNU swallows any flag-shaped token after a positional as data
-// without re-validating it — so `gh repo view o/r --web` (browser launch) and
-// `gh api repos/o/r -X POST` (network write) would be ALLOWED. Whitelist-only cannot
-// close that vector here; it needs the post-positional flag-validation engine work
-// in FUTURE-WORK.md §8. Until then those two are absent (they fall through) and live
-// in TestNotYetAllowed.
+// Scope: `gh auth status`, `gh repo view`, and `gh api` (GET-only). The latter two
+// require a positional (the OWNER/REPO or the API endpoint); they are safe now that
+// §8 getopt permutation validates flags even after a positional — so a trailing
+// `gh repo view o/r --web` (browser launch) or `gh api repos/o/r -X POST` (network
+// write) hits an unwhitelisted flag and falls through. The write/exec flags are
+// simply never listed; permutation does the rest.
 func ghSpec() *commandSpec {
 	return &commandSpec{
 		Style: styleGNU,
 		Subcommands: map[string]*commandSpec{
 			"auth": ghAuthSpec(),
+			"repo": ghRepoSpec(),
+			"api":  ghApiSpec(),
 		},
 	}
 }
@@ -2396,8 +2394,7 @@ func ghAuthSpec() *commandSpec {
 }
 
 // ghAuthStatusSpec is the read-only `gh auth status`. It takes no positional and has
-// no dangerous flag, so it is safe under the current engine (an unknown flag or any
-// positional falls through). Deliberately excluded: -t/--show-token (prints the auth
+// no dangerous flag. Deliberately excluded: -t/--show-token (prints the auth
 // token — secret disclosure).
 func ghAuthStatusSpec() *commandSpec {
 	return &commandSpec{
@@ -2405,6 +2402,61 @@ func ghAuthStatusSpec() *commandSpec {
 		Flags: []flagSpec{
 			{Short: "h", Long: "hostname", TakesArg: true},
 			{Short: "a", Long: "active"},
+			{Long: "help"},
+		},
+	}
+}
+
+// ghRepoSpec whitelists ONLY `gh repo view`. The mutating siblings — create, delete,
+// edit, fork, clone, rename, archive, unarchive, sync, set-default — change
+// remote/local state and are absent.
+func ghRepoSpec() *commandSpec {
+	return &commandSpec{
+		Style: styleGNU,
+		Subcommands: map[string]*commandSpec{
+			"view": ghRepoViewSpec(),
+		},
+	}
+}
+
+// ghRepoViewSpec is the read-only `gh repo view [OWNER/REPO]`. The OWNER/REPO is an
+// optional positional (AllowAnyPositional); §8 permutation keeps validating flags
+// after it, so the excluded -w/--web (launches a browser — exec side effect) is
+// rejected wherever it appears. NOT ArgvDataSafe.
+func ghRepoViewSpec() *commandSpec {
+	return &commandSpec{
+		Style:              styleGNU,
+		AllowAnyPositional: true,
+		Flags: []flagSpec{
+			{Long: "json", TakesArg: true},
+			{Short: "q", Long: "jq", TakesArg: true},
+			{Short: "t", Long: "template", TakesArg: true},
+			{Short: "b", Long: "branch", TakesArg: true},
+			{Short: "R", Long: "repo", TakesArg: true},
+			{Long: "help"},
+		},
+	}
+}
+
+// ghApiSpec is the read-only `gh api ENDPOINT` (GET only). gh api defaults to GET;
+// -X/--method, -f/--raw-field, -F/--field, --input turn it into a network write.
+// Whitelist-only + §8 permutation close that: only read flags are listed, and the
+// method/field/input flags are deliberately absent, so any write form hits an
+// unwhitelisted flag — after the endpoint positional too — and falls through. NOT
+// ArgvDataSafe. Deliberately excluded: -X/--method, -f/--raw-field, -F/--field,
+// --input, -H/--header.
+func ghApiSpec() *commandSpec {
+	return &commandSpec{
+		Style:              styleGNU,
+		AllowAnyPositional: true,
+		Flags: []flagSpec{
+			{Long: "cache", TakesArg: true},
+			{Long: "paginate"},
+			{Short: "q", Long: "jq", TakesArg: true},
+			{Short: "t", Long: "template", TakesArg: true},
+			{Long: "hostname", TakesArg: true},
+			{Short: "i", Long: "include"},
+			{Long: "slurp"},
 			{Long: "help"},
 		},
 	}

@@ -55,15 +55,16 @@ type flagSpec struct {
 //     clusters `-abc`/`-n5` matched letter-by-letter against Short.
 //   - A `--` token ends flag parsing; subsequent args are positional.
 //   - The first non-flag arg either selects a Subcommand (if Subcommands is
-//     non-nil) or marks the start of positionals.
-//   - The first positional "closes" the flag section: every token after it is
-//     taken as a positional, including flag-shaped ones. So `cat file -X` accepts
-//     `-X` as DATA, not as a validated flag. This is safe ONLY because every
-//     AllowAnyPositional command has no dangerous flag for a swallowed token to
-//     trigger; a reader whose write/exec path is a flag (gh's `--web`/`-X`,
-//     journalctl's `--vacuum-*`) must therefore NOT set AllowAnyPositional, or its
-//     dangerous flag could ride in after the positional. Validating post-positional
-//     flags (GNU getopt permutation) is FUTURE-WORK.md §8.
+//     non-nil) or is the first positional.
+//   - Flags are validated by GNU getopt *permutation* (§8): a flag-shaped token is
+//     checked against the spec even when it appears AFTER a positional, so an
+//     unwhitelisted flag falls through wherever it lands (`gh repo view o/r --web`
+//     → reject `--web`). The sole exception is an `ArgvDataSafe` command: it is safe
+//     under any argv, flag-shaped tokens included, so its first positional closes
+//     flag parsing and the rest is opaque data (`cat file -X` accepts `-X` as data).
+//     This is why a reader whose only write/exec path is a flag (journalctl's
+//     `--vacuum-*`) can set AllowAnyPositional yet stay safe: the flag is still
+//     validated and rejected; it just must NOT be `ArgvDataSafe`.
 //   - If Subcommands is non-nil and no subcommand is selected, fall through.
 //   - If Subcommands is nil and AllowAnyPositional is false, any positional
 //     causes fall-through.
@@ -160,119 +161,147 @@ func (s *commandSpec) match(args []argToken) bool {
 }
 
 func (s *commandSpec) matchGNU(args []argToken) bool {
+	// GNU getopt permutation (FUTURE-WORK §8): positionals do NOT close the flag
+	// section. We keep scanning and *validating* flags even after a positional has
+	// appeared, so an unwhitelisted flag is rejected wherever it lands — closing the
+	// hazard where a reader's only write/exec path is a flag (`gh repo view --web`,
+	// `journalctl --vacuum-size`) that the operand carries in after its positional.
+	// The one exception is an ArgvDataSafe command: it is safe under ANY argv,
+	// flag-shaped tokens included, so once its first positional appears the rest is
+	// opaque data and we stop validating (the fast path that preserves
+	// `cat file --anything`). A literal `--` ends flag parsing for everyone.
+	var positionals []argToken
 	i := 0
 	for i < len(args) {
-		// A substituted operand is never a flag or `--` — treat it (and the rest
-		// of the tail) as positional. handlePositionals enforces ArgvDataSafe.
-		if args[i].subst {
-			return s.handlePositionals(args[i:])
-		}
-		arg := args[i].lit
+		tok := args[i]
 
-		// `--` ends flag parsing; remaining args are positional/subcommand-positional.
-		if arg == "--" {
-			return s.handlePositionals(args[i+1:])
-		}
-
-		// Long flag: `--name` or `--name=value`. A long-flag name never starts
-		// with another `-`, so tokens like `---` or `----foo` are NOT flags —
-		// they fall through to positional handling. This matches how GNU getopt
-		// treats such tokens (e.g. `echo ---` prints `---`).
-		if strings.HasPrefix(arg, "--") && len(arg) > 2 && arg[2] != '-' {
-			name, val, hasVal := arg[2:], "", false
-			if eq := strings.IndexByte(name, '='); eq >= 0 {
-				val = name[eq+1:]
-				name = name[:eq]
-				hasVal = true
-				_ = val
+		// `--` ends flag parsing; everything after is positional (or, with
+		// Subcommands, the subcommand name + its args).
+		if !tok.subst && tok.lit == "--" {
+			tail := args[i+1:]
+			if s.Subcommands != nil {
+				return s.dispatchSubcommand(tail)
 			}
-			f, ok := s.findLong(name)
-			if !ok {
-				return false
-			}
-			if hasVal {
-				if !f.TakesArg && !f.OptionalArg {
-					return false
-				}
-			} else if f.TakesArg {
-				if i+1 >= len(args) {
-					return false
-				}
-				if args[i+1].subst {
-					return false // a flag's value must be literal, never substituted
-				}
-				i++ // consume required value
-			}
-			// !hasVal && !TakesArg: fine (OptionalArg or no-arg flag, both work)
-			i++
-			continue
+			return s.acceptPositionals(append(positionals, tail...))
 		}
 
-		// Short flag cluster: `-l`, `-la`, `-n5`, `-n` (with value next). A short
-		// flag's first character is never `-`, so `---` etc. fall through to
-		// positional handling alongside `---foo` from the long-flag branch.
-		if strings.HasPrefix(arg, "-") && len(arg) > 1 && arg[1] != '-' {
-			cluster := arg[1:]
-			consumedNext := false
-			for j := 0; j < len(cluster); j++ {
-				letter := string(cluster[j])
-				f, ok := s.findShort(letter)
+		// A substituted operand is never a flag — skip the flag checks; it is a
+		// positional handled below.
+		if !tok.subst {
+			arg := tok.lit
+
+			// Long flag: `--name` or `--name=value`. A long-flag name never starts
+			// with another `-`, so tokens like `---` or `----foo` are NOT flags —
+			// they are positionals (matches GNU getopt, e.g. `echo ---`).
+			if strings.HasPrefix(arg, "--") && len(arg) > 2 && arg[2] != '-' {
+				name, hasVal := arg[2:], false
+				if eq := strings.IndexByte(name, '='); eq >= 0 {
+					name = name[:eq]
+					hasVal = true
+				}
+				f, ok := s.findLong(name)
 				if !ok {
 					return false
 				}
-				if f.TakesArg {
-					if j+1 < len(cluster) {
-						// Rest of cluster is the value; nothing more to scan.
-					} else {
-						// Cluster ends with a value-taking flag; consume next arg.
-						if i+1 >= len(args) {
-							return false
-						}
-						if args[i+1].subst {
-							return false // a flag's value must be literal, never substituted
-						}
-						consumedNext = true
+				if hasVal {
+					if !f.TakesArg && !f.OptionalArg {
+						return false
 					}
-					break
+				} else if f.TakesArg {
+					if i+1 >= len(args) {
+						return false
+					}
+					if args[i+1].subst {
+						return false // a flag's value must be literal, never substituted
+					}
+					i++ // consume required value
 				}
-			}
-			i++
-			if consumedNext {
+				// !hasVal && !TakesArg: fine (OptionalArg or no-arg flag, both work)
 				i++
+				continue
 			}
-			continue
+
+			// Short flag cluster: `-l`, `-la`, `-n5`, `-n` (with value next). A short
+			// flag's first character is never `-`, so `---`/`-` fall through to
+			// positional handling.
+			if strings.HasPrefix(arg, "-") && len(arg) > 1 && arg[1] != '-' {
+				cluster := arg[1:]
+				consumedNext := false
+				for j := 0; j < len(cluster); j++ {
+					letter := string(cluster[j])
+					f, ok := s.findShort(letter)
+					if !ok {
+						return false
+					}
+					if f.TakesArg {
+						if j+1 < len(cluster) {
+							// Rest of cluster is the value; nothing more to scan.
+						} else {
+							// Cluster ends with a value-taking flag; consume next arg.
+							if i+1 >= len(args) {
+								return false
+							}
+							if args[i+1].subst {
+								return false // a flag's value must be literal, never substituted
+							}
+							consumedNext = true
+						}
+						break
+					}
+				}
+				i++
+				if consumedNext {
+					i++
+				}
+				continue
+			}
 		}
 
-		// First positional.
-		return s.handlePositionals(args[i:])
+		// Positional token (a non-flag literal, or a substituted operand).
+		if s.Subcommands != nil {
+			// The first positional selects the subcommand; everything after it is
+			// re-parsed by the subcommand's own grammar (no permutation across the
+			// boundary — the subcommand has its own flag set).
+			return s.dispatchSubcommand(args[i:])
+		}
+		if s.ArgvDataSafe {
+			// Safe under any argv: the rest is opaque data, stop validating flags.
+			return s.acceptPositionals(append(positionals, args[i:]...))
+		}
+		// Non-ArgvDataSafe: record the positional and keep validating later flags.
+		positionals = append(positionals, tok)
+		i++
 	}
 
-	// No positional encountered.
-	return s.handlePositionals(nil)
+	if s.Subcommands != nil {
+		return false // subcommand required, none seen
+	}
+	return s.acceptPositionals(positionals)
 }
 
-// handlePositionals processes the positional tail (after flags or `--`).
-// If Subcommands is non-nil, the first element is the subcommand name and the
-// rest are re-parsed by the subcommand's spec. Otherwise we accept iff the
-// spec allows positionals (or there are none).
-func (s *commandSpec) handlePositionals(args []argToken) bool {
-	if s.Subcommands != nil {
-		if len(args) == 0 {
-			return false // subcommand required
-		}
-		if args[0].subst {
-			return false // the subcommand name must be literal so we know its spec
-		}
-		sub, ok := s.Subcommands[args[0].lit]
-		if !ok {
-			return false
-		}
-		return sub.match(args[1:])
+// dispatchSubcommand selects and recurses into a subcommand. args[0] is the
+// subcommand name (must be literal so we know which spec applies); args[1:] are
+// re-parsed by that subcommand's spec.
+func (s *commandSpec) dispatchSubcommand(args []argToken) bool {
+	if len(args) == 0 {
+		return false // subcommand required
 	}
-	// A substituted positional is opaque data; accept it only when this command is
-	// safe under ANY argv (ArgvDataSafe). Every ArgvDataSafe command also sets
-	// AllowAnyPositional, so the literal-positional check below still gates them.
-	for _, a := range args {
+	if args[0].subst {
+		return false // the subcommand name must be literal
+	}
+	sub, ok := s.Subcommands[args[0].lit]
+	if !ok {
+		return false
+	}
+	return sub.match(args[1:])
+}
+
+// acceptPositionals decides a leaf spec (no Subcommands) given its collected
+// positionals. A substituted positional is opaque data, accepted only for an
+// ArgvDataSafe command (safe under any argv); every ArgvDataSafe command also sets
+// AllowAnyPositional, so the literal-positional gate below still applies.
+func (s *commandSpec) acceptPositionals(positionals []argToken) bool {
+	for _, a := range positionals {
 		if a.subst && !s.ArgvDataSafe {
 			return false
 		}
@@ -280,7 +309,7 @@ func (s *commandSpec) handlePositionals(args []argToken) bool {
 	if s.AllowAnyPositional {
 		return true
 	}
-	return len(args) == 0
+	return len(positionals) == 0
 }
 
 // matchWrapper accepts argv of the shape `[flag…] [positional…] -- CMD [ARG…]`.
