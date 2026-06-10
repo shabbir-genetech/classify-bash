@@ -175,6 +175,20 @@ your eye lands on. The findings and the resulting re-prioritization (un-whitelis
 levers; Tier-2 `--` and a `sed` parser confirmed ≈0 demand) live in
 [FUTURE-WORK.md](FUTURE-WORK.md) "Observed demand".
 
+Two corpus-scale moves from the second pass (2026-06-10), both replay-based:
+- **"What would shipping/redeploying buy?"** Replay *every* logged fall-through
+  through the new binary and count the ones that flip to allow. The log only holds
+  fall-throughs (the running hook never logs an allow), so any flip is a form the
+  new build would newly accelerate — a direct, per-record measure of a change's
+  real value, not a guess.
+- **Detect deploy lag.** Run the same forms through the deployed `PATH` binary and
+  the freshly built `./result` binary side by side; divergence means the consumer
+  hasn't re-locked/rebuilt yet (see "How it's deployed" — a change only reaches the
+  hook after commit + push + downstream re-lock). One caveat the second pass made
+  vivid: a feature can be live yet show ~no benefit because the dominant usage
+  pattern is blocked by an *unrelated* rule — e.g. `journalctl … > file` falls
+  through on the write-redirect rule no matter what the whitelist says.
+
 ## AST handling (`classifyCmd`)
 
 The shell command is parsed with `mvdan.cc/sh/v3/syntax`. Compound forms are

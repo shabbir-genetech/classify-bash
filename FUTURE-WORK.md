@@ -307,6 +307,23 @@ gh
 *Excluded:* `-t/--show-token` (prints the auth token — secret disclosure). No
 positional, no dangerous flag, so an unknown flag or any positional falls through.
 
+### Field note — first deploy, observed 2026-06-10
+Verified live on the dev host: the deployed hook (on `PATH`) now resolves to the
+§5 build and allows `journalctl -t classify-bash …` and `gh auth status`. Two
+practical findings from replaying the live corpus against it:
+
+- **§5's real reach is narrower than the raw "journalctl demand" count suggests.**
+  Most observed journalctl use *redirects to a file* (`journalctl … > /tmp/log`,
+  to parse later), which falls through on the universal write-redirect rule
+  **regardless of §5** — only direct-to-terminal queries accelerate. This isn't a
+  §5 limitation; it's the redirect rule interacting with the dominant usage
+  pattern. Set expectations accordingly: log-dump-to-file workflows won't speed up.
+- Replaying all 158 logged fall-throughs through the new binary, **10 now allow** —
+  ~2 §5-attributable (the stdout journalctl reads), the other ~8 from earlier
+  features the log-time binary predated (`jj bookmark list 2>&1 | grep …`,
+  command-substitution `echo "$(readlink -f …)"` / `nix eval` inners). A redeploy
+  buys more than §5 alone.
+
 ### Code & tests (as built)
 - `commands.go`: registered `"journalctl"` (Tier C) + `"gh"` (Tier B); builders
   `journalctlSpec`, `ghSpec`, `ghAuthSpec`, `ghAuthStatusSpec`. No engine changes.
