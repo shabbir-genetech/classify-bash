@@ -241,53 +241,49 @@ unrecognized.
 
 ---
 
-## 5. `journalctl` and `gh` read subcommands — **PARTIALLY IMPLEMENTED (2026-06-10)**
+## 5. `journalctl` and `gh` read subcommands — **IMPLEMENTED (2026-06-10)**
 
-Scope was locked by sign-off (2026-06-09): **D1** include `gh api` GET-only · **D2**
+Scope locked by sign-off (2026-06-09): **D1** include `gh api` GET-only · **D2**
 `gh` observed-only subcommands · **D3** exclude journalctl alternate-location flags.
-Implementation then surfaced a safety finding that **invalidated D1 and the `gh repo
-view` half of D2** under the current engine (see "Implementation finding" below);
-those parts are deferred to **§8**, which unblocks them. What actually shipped:
+Shipped in two steps: `journalctl` (flag forms) + `gh auth status` first; then
+**§8** (post-positional flag validation) unblocked the positional-bearing forms —
+`gh repo view`, `gh api`, and journalctl positional field-matches. All now live:
 
-| target | status | note |
-|--------|--------|------|
-| `journalctl` (read flags) | ✅ shipped | flag-only — `AllowAnyPositional: false` (see below) |
-| `gh auth status` | ✅ shipped | no positional, no dangerous flag → safe today |
-| `gh repo view` | ⏸ deferred → §8 | needs the `OWNER/REPO` positional + has `--web` |
-| `gh api` (GET-only) | ⏸ deferred → §8 | needs the endpoint positional + has `-X`/`-f`/`-F` |
+| target | status |
+|--------|--------|
+| `journalctl` read flags + positional matches | ✅ (`AllowAnyPositional: true`, safe via §8) |
+| `gh auth status` | ✅ |
+| `gh repo view` | ✅ (via §8) |
+| `gh api` (GET-only) | ✅ (via §8) |
 
-The shipped pieces still follow the **whitelist-only** discipline: dangerous modes
-are left *off* the whitelist (they fall through by default) and recorded in
-`// deliberately excluded` comments, never as a deny-list.
+Whitelist-only throughout: dangerous modes are left *off* the whitelist (they fall
+through by default) and recorded in `// deliberately excluded` comments, never as a
+deny-list. `ArgvDataSafe: false` on every spec here — none may receive an opaque,
+attacker-controlled operand (`gh` writes over the network; journalctl's `--vacuum-*`
+is a flag-reachable delete).
 
-### Implementation finding — why D1 and `gh repo view` deferred
-The spec claimed whitelist-only closes the write vector: "never list `-X`/`--web`
-and they're rejected." **False under the current engine.** `matchGNU` treats every
-token *after the first positional* as opaque data and does **not** re-validate
-flag-shaped tokens once a positional opens the section (`handlePositionals` just
-accepts the tail). Verified against the binary: `cat file -X` → allow, `git log
-HEAD --output=/etc/passwd` → allow. That is harmless for `cat`/`git log` (no
-dangerous flag exists), but `gh repo view` and `gh api` **require** a positional
-(the repo / the endpoint), so a trailing `gh repo view o/r --web` (browser launch)
-or `gh api repos/o/r -X POST` (network write) would be **swallowed and allowed**,
-and real `gh` parses it. Whitelist data cannot fix this — it needs §8.
+### Origin of §8 — the finding that drove the engine change
+The original spec assumed whitelist-only closes the write vector: "never list
+`-X`/`--web` and they're rejected." That was **false** for the pre-§8 engine —
+`matchGNU` swallowed every token after the first positional as data without
+re-validating flag-shaped ones (`cat file -X` → allow). Harmless for `cat`/`git
+log` (no dangerous flag), but `gh repo view <repo> --web` and `gh api <endpoint>
+-X POST` carry the dangerous flag in *after* the required positional, so they would
+have been allowed. That finding became **§8** (now implemented): for non-
+`ArgvDataSafe` commands, flags are validated wherever they appear, so the trailing
+`--web`/`-X` is rejected. journalctl likewise now safely sets
+`AllowAnyPositional: true` — a `journalctl _SYSTEMD_UNIT=x --vacuum-size=1G` is
+rejected on the unwhitelisted flag even after the positional.
 
-The same hazard is why **`journalctl` shipped with `AllowAnyPositional: false`**:
-journalctl carries destructive flags (`--vacuum-size`, `--rotate`), so allowing a
-positional field-match would let `journalctl x --vacuum-size=1G` slip a delete past
-us. Accepting *no* positional means no token ever opens the gate, so every
-unwhitelisted flag is always rejected. Cost: positional field-matches
-(`journalctl _SYSTEMD_UNIT=foo`) fall through — none appear in observed use; they
-wait on §8 too. This covers 100% of the corpus's (flag-only) journalctl demand.
-
-### Shipped: `journalctl` — `styleGNU`, `AllowAnyPositional: false`, `ArgvDataSafe: false`
+### `journalctl` — `styleGNU`, `AllowAnyPositional: true`, `ArgvDataSafe: false`
 - **Whitelisted (read/query/filter/format):** `-t/--identifier`, `-u/--unit`,
   `--user-unit`, `-n/--lines`, `-S/--since`, `-U/--until`, `-p/--priority`,
   `-g/--grep`, `--case-sensitive`, `-b/--boot`, `-k/--dmesg`, `-o/--output`,
   `--output-fields`, `-r/--reverse`, `-e/--pager-end`, `-x/--catalog`, `-a/--all`,
   `-q/--quiet`, `-m/--merge`, `--utc`, `--no-pager`, `--no-tail`, `--no-full`,
   `--no-hostname`, `-N/--fields`, `-F/--field`, `--list-boots`, `--header`,
-  `--disk-usage`, `--version`, `-h/--help`.
+  `--disk-usage`, `--version`, `-h/--help`. Positionals = field matches
+  (`_SYSTEMD_UNIT=foo`) / executable paths.
 - **Deliberately excluded (fall through):** `--vacuum-size`, `--vacuum-time`,
   `--vacuum-files` (delete journals), `--rotate`, `--flush`, `--sync`,
   `--relinquish-var`, `--smart-relinquish-var`, `--setup-keys`, `--update-catalog`,
@@ -295,53 +291,42 @@ wait on §8 too. This covers 100% of the corpus's (flag-only) journalctl demand.
   wall); and per **D3** the alternate-location readers `-D/--directory`, `--file`,
   `--root`, `-M/--machine`, `--namespace`.
 
-### Shipped: `gh` — modeled on `gitSpec()`, `ArgvDataSafe: false` everywhere
-v1 ships only `gh auth status` (the rest of the tree waits on §8):
-
+### `gh` — modeled on `gitSpec()`, `ArgvDataSafe: false` everywhere
 ```
 gh
-└── auth → status      (login/logout/refresh/token/setup-git excluded)
+├── auth → status   (-h/--hostname, -a/--active; EXCL -t/--show-token = secret)
+├── repo → view     (--json, -q/--jq, -t/--template, -b/--branch, -R/--repo;
+│                     OWNER/REPO positional; EXCL -w/--web = browser launch)
+└── api             (GET-only: --cache, --paginate, -q/--jq, -t/--template,
+                      --hostname, -i/--include, --slurp; ENDPOINT positional;
+                      EXCL -X/--method, -f/--raw-field, -F/--field, --input, -H)
 ```
-
-`gh auth status` — flags `-h/--hostname` (arg), `-a/--active`, `--help`.
-*Excluded:* `-t/--show-token` (prints the auth token — secret disclosure). No
-positional, no dangerous flag, so an unknown flag or any positional falls through.
+All mutating subcommands (`repo edit|create|delete`, `pr/issue/release create…`,
+`auth login|logout|token`) are simply absent → fall through.
 
 ### Field note — first deploy, observed 2026-06-10
-Verified live on the dev host: the deployed hook (on `PATH`) now resolves to the
-§5 build and allows `journalctl -t classify-bash …` and `gh auth status`. Two
-practical findings from replaying the live corpus against it:
-
-- **§5's real reach is narrower than the raw "journalctl demand" count suggests.**
-  Most observed journalctl use *redirects to a file* (`journalctl … > /tmp/log`,
-  to parse later), which falls through on the universal write-redirect rule
-  **regardless of §5** — only direct-to-terminal queries accelerate. This isn't a
-  §5 limitation; it's the redirect rule interacting with the dominant usage
-  pattern. Set expectations accordingly: log-dump-to-file workflows won't speed up.
-- Replaying all 158 logged fall-throughs through the new binary, **10 now allow** —
-  ~2 §5-attributable (the stdout journalctl reads), the other ~8 from earlier
-  features the log-time binary predated (`jj bookmark list 2>&1 | grep …`,
-  command-substitution `echo "$(readlink -f …)"` / `nix eval` inners). A redeploy
-  buys more than §5 alone.
+A general learning worth keeping: **§5's real reach is narrower than the raw
+"journalctl demand" count suggests.** Most observed journalctl use *redirects to a
+file* (`journalctl … > /tmp/log`, to parse later), which falls through on the
+universal write-redirect rule **regardless of §5** — only direct-to-terminal
+queries accelerate. Not a §5 limitation; the redirect rule interacting with the
+dominant usage pattern. (Measured the same day: replaying all 158 logged
+fall-throughs through the then-new binary, 10 flipped to allow — only ~2
+§5-attributable, the rest earlier features the deployed binary predated.)
 
 ### Code & tests (as built)
-- `commands.go`: registered `"journalctl"` (Tier C) + `"gh"` (Tier B); builders
-  `journalctlSpec`, `ghSpec`, `ghAuthSpec`, `ghAuthStatusSpec`. No engine changes.
-- **`TestMustAllow`:** `journalctl -t classify-bash --no-pager`,
-  `journalctl -t classify-bash -o cat`, `journalctl -u sshd -n 50 --no-pager`,
-  `journalctl --since 2026-06-09 -r`, `journalctl`, `gh auth status`,
-  `gh auth status --active`, `gh auth status --hostname github.com`.
-- **`TestMustNotAllow` (the wall):** `journalctl --vacuum-size=1G`/`--vacuum-time`/
-  `--rotate`/`--flush`/`--sync`/`--update-catalog`/`--setup-keys`,
-  `journalctl _SYSTEMD_UNIT=x --rotate`, `journalctl /usr/bin/foo --vacuum-size=1G`
-  (the post-positional guards), `gh auth login`/`logout`/`refresh`/`token`,
-  `gh auth status --show-token`, `gh repo edit … --visibility public`,
-  `gh repo delete`/`create`, `gh pr create`/`merge`, `gh api … -X POST`,
-  `gh api … -f name=x`, `gh repo view o/r --web`.
-- **`TestNotYetAllowed` (harmless, await §8):** `journalctl -f`,
-  `journalctl _SYSTEMD_UNIT=sshd`, `journalctl /usr/bin/foo`,
-  `gh repo view o/r [--json visibility]`, `gh api repos/o/r --jq .visibility`,
-  `gh pr view 123`, `gh issue list`.
+- `commands.go`: `"journalctl"` (Tier C) + `"gh"` (Tier B); builders
+  `journalctlSpec`, `ghSpec`, `ghAuthSpec`, `ghAuthStatusSpec`, `ghRepoSpec`,
+  `ghRepoViewSpec`, `ghApiSpec`. Engine change for the positional forms is §8.
+- **`TestMustAllow`:** the journalctl flag + positional forms, `gh auth status`
+  (+`--active`/`--hostname`), `gh repo view o/r [--json … -q …]`,
+  `gh api repos/o/r --jq … / --paginate`, plus the §8 guard `git log HEAD -p`.
+- **`TestMustNotAllow` (the wall):** the journalctl management flags and the
+  post-positional guards (`journalctl _SYSTEMD_UNIT=x --rotate`,
+  `gh repo view o/r --json name --web`, `gh api repos/o/r --paginate -X DELETE`),
+  the gh mutating subcommands, and `gh auth status --show-token`.
+- **`TestNotYetAllowed`:** `journalctl -f` (follow, excluded); `gh pr view 123`,
+  `gh issue list` (read subcommands outside the observed-only set).
 
 ---
 
@@ -425,74 +410,44 @@ with `$X` bound to a literal.
 
 ---
 
-## 8. Validate flags *after* positionals in `matchGNU` — **RESEARCH (unblocks §5 D1/D2)**
+## 8. Validate flags *after* positionals in `matchGNU` — **IMPLEMENTED (2026-06-10)**
 
-### The limitation (found implementing §5, 2026-06-10)
-`matchGNU` stops parsing flags at the first positional: it calls
-`handlePositionals(args[i:])`, which accepts the entire tail as data without
-re-checking whether later tokens are flag-shaped. So `cat file -X` and `git log
-HEAD --output=/etc/passwd` both **allow**. This is sound *only* because every
-`AllowAnyPositional` command shipped so far has **no dangerous flag** — there is
-nothing harmful for a swallowed trailing token to trigger.
+### The limitation it fixed
+Pre-§8, `matchGNU` stopped parsing flags at the first positional and accepted the
+whole tail as data without re-checking flag-shaped tokens, so `cat file -X` and
+`git log HEAD --output=/etc/passwd` both allowed. Sound only because every
+`AllowAnyPositional` command then shipped had no dangerous flag. It broke for any
+reader whose dangerous behavior is a *flag* while its primary argument is a
+*positional* — `gh repo view <repo> --web`, `gh api <endpoint> -X POST`,
+`journalctl <match> --vacuum-size=1G` — where the dangerous flag lands after the
+positional and was swallowed. (Found implementing §5; that finding became this item.)
 
-That assumption breaks for any reader whose dangerous behavior lives in a *flag*
-while its primary argument is a *positional*. `gh repo view <repo> --web` (browser
-launch), `gh api <endpoint> -X POST` (network write), and `journalctl <match>
---vacuum-size=1G` (delete) all have a required positional, so the dangerous flag
-lands *after* it and is swallowed. §5 worked around this by (a) shipping only the
-no-positional forms (`gh auth status`) and (b) giving `journalctl`
-`AllowAnyPositional: false` — but that also blocks the legitimate positional forms
-(`gh repo view <repo>`, `gh api <endpoint>`, `journalctl _SYSTEMD_UNIT=foo`).
+### What shipped
+`matchGNU` now follows GNU getopt **permutation**: it keeps scanning and validating
+flags against `spec.Flags` even after positionals appear, so an unwhitelisted flag
+falls through wherever it lands. `handlePositionals` was replaced by
+`dispatchSubcommand` (first positional selects a subcommand, as before) +
+`acceptPositionals` (leaf decision over the collected positionals). The behavior:
+- `git log HEAD -p` → allows (`-p` whitelisted) — no regression for "flag after arg".
+- `gh api repos/o/r -X POST` / `gh repo view o/r --web` → **fall through** (`-X` /
+  `--web` not whitelisted, even after the positional).
+- `journalctl _SYSTEMD_UNIT=x --vacuum-size=1G` → falls through.
 
-### Idea
-Make `matchGNU` follow GNU getopt **permutation** semantics: keep scanning and
-*validating* flags against `spec.Flags` even after positionals have appeared,
-instead of dumping the tail into `handlePositionals`. A token starting with `-`
-(and not `--`/`---…`) after a positional is still a flag and must match the
-whitelist or fall through; a non-flag token is a positional. Net effect:
-- `git log HEAD -p` → still allows (`-p` is whitelisted) — no regression for the
-  common "flag after a revision" idiom.
-- `gh api repos/o/r -X POST` → **falls through** (`-X` not whitelisted), closing
-  the write vector that §5 D1 could not.
-- `gh repo view o/r --web` → **falls through** (`--web` not whitelisted).
+**Resolved design decisions (the former open questions):**
+- *Permutation vs. POSIX strict-ordering* → **permutation** (matches GNU default;
+  we parse statically with no env to honor `POSIXLY_CORRECT`).
+- *Do `ArgvDataSafe` commands keep the "tail is data" fast path?* → **yes.** An
+  `ArgvDataSafe` command is safe under any argv (flag-shaped included), so its first
+  positional still closes flag parsing and the rest is opaque data — this preserves
+  `cat file --anything` and is the documented exception in `matchGNU`. Non-
+  `ArgvDataSafe` commands get full permuted validation.
+- *Audit for regressions* → none: the whole corpus stayed green; the only newly-
+  rejected forms are unwhitelisted post-positional flags (never in `TestMustAllow`).
 
-Once this lands, the §5 deferrals become safe: add `gh repo view` and `gh api`
-(GET-only) exactly as the original §5 spec described (the flag lists are already
-written there), flip `journalctl` back to `AllowAnyPositional: true`, and move the
-corresponding `TestNotYetAllowed` cases up to `TestMustAllow`.
-
-### Why it is real engine work (not a data change)
-- **Blast radius.** `matchGNU` is the most-exercised matcher; every `styleGNU`
-  command's corpus case must stay green. The change must preserve today's
-  "positional then whitelisted flag" allows while *adding* rejection of
-  unwhitelisted post-positional flags. The existing comment on `commandSpec`
-  ("flags after the first positional are NOT accepted") is currently *aspirational*
-  — the code accepts them as data; §8 makes the comment true.
-- **Interactions to re-derive, not assume:** the `--` end-of-flags rule
-  (everything after stays positional — must remain); substituted (`subst`) tokens
-  after positionals (still positional-only, still `ArgvDataSafe`-gated); the
-  `AllowAnyPositional == false` specs (a stray post-positional flag should keep
-  falling through, as now); and `ArgvDataSafe` readers (`cat file -X` — should the
-  permuted scan still treat `-X` as harmless data? `cat` is safe under any argv, so
-  yes — likely an `ArgvDataSafe` short-circuit in the permuted path).
-
-### Open questions before a spec
-- Does any *currently-allowed* corpus case rely on a non-whitelisted flag being
-  swallowed after a positional? (Audit `TestMustAllow`; if yes, those flags must be
-  added to their specs or the case re-examined.)
-- Permutation vs. POSIX strict-ordering: GNU permutes by default but
-  `POSIXLY_CORRECT`/a leading `-` in optstring stops at the first positional. We
-  parse statically with no env; pick permutation (matches GNU default, the common
-  case) and document it.
-- Whether `ArgvDataSafe` commands keep the "tail is data" fast path or also switch
-  to validated scanning (they have no dangerous flag, so either is safe; the fast
-  path is simpler and preserves `cat file --anything`).
-
-### Acceptance
-`gh repo view o/r --web`, `gh api repos/o/r -X POST`, and the existing
-`journalctl … --vacuum-*` post-positional guards stay in `TestMustNotAllow`;
-`git log HEAD -p` and the §5-deferred reads move to / stay in `TestMustAllow`; no
-regression anywhere in the corpus.
+The `--` end-of-flags rule, subst-token gating, and `AllowAnyPositional == false`
+behavior are all preserved. This is what let §5's `gh repo view` / `gh api` /
+journalctl positional matches go live (their `TestNotYetAllowed` cases moved up to
+`TestMustAllow`).
 
 ---
 

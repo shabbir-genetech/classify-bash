@@ -199,16 +199,19 @@ the injected token could supply that flag. Add a `mustAllow` `xargs <cmd> …` (
 `<cmd> "$(…)"`) case plus the matching `mustNotAllow`. `ArgvDataSafe` is the single
 source of truth — no parallel list. See "Flag styles" (`styleXargs`) and DESIGN.md.
 
-Before setting **`AllowAnyPositional: true`**, confirm the command has **no
-dangerous flag at all** — not merely that you excluded it from the spec. `matchGNU`
-stops validating flags at the first positional and accepts every later token as
-data (so `cat file -X` allows `-X` as data). That is safe only when no swallowed
-token can trigger anything: a reader whose write/exec/network path is a *flag*
-(`gh repo view --web`, `journalctl --vacuum-size`) would have that flag ride in
-*after* its positional and be allowed. Such a command must **not** set
-`AllowAnyPositional` until §8 (validate post-positional flags) lands — give it a
-fixed flag set with no positional instead, or leave the positional forms in
-`TestNotYetAllowed`. See FUTURE-WORK.md §5/§8.
+**`AllowAnyPositional: true`** lets a command take free positional arguments. Since
+§8, `matchGNU` validates flags by GNU getopt *permutation* — a flag-shaped token is
+checked against the spec **even after a positional** — so a reader whose
+write/exec/network path is a *flag* (`gh repo view --web`, `journalctl
+--vacuum-size`) can safely set `AllowAnyPositional`: the unwhitelisted flag is
+rejected wherever it lands. The one rule that still bites: such a command must
+**not** also be `ArgvDataSafe`, because an `ArgvDataSafe` command keeps the fast
+path (its first positional closes flag parsing and the rest is opaque data, so
+`cat file -X` allows `-X` as data). That fast path is correct only when the command
+has no flag-reachable side effect at all — which is exactly what `ArgvDataSafe`
+already asserts. So: `AllowAnyPositional` is free to set; just never pair
+`ArgvDataSafe` with a spec that has any flag-reachable write/exec path. See
+FUTURE-WORK.md §5/§8 and `matchGNU`.
 
 ## Flag styles
 

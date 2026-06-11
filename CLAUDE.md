@@ -138,14 +138,15 @@ jj.)
   its spec sets `ArgvDataSafe` — true only when it has no write/exec/network path
   under *any* argv, flag-shaped values included. It is a field on `commandSpec`, not
   a separate list; do not reintroduce a parallel set.
-- **`AllowAnyPositional` requires a command with no dangerous flag.** `matchGNU`
-  stops validating flags at the first positional and swallows every later token as
-  data (`cat file -X` allows `-X`). So a reader whose write/exec/network path is a
-  *flag* (`gh repo view --web`, `journalctl --vacuum-size`) must NOT set
-  `AllowAnyPositional` — the flag would ride in after the positional and be allowed.
-  Until FUTURE-WORK.md §8 (validate post-positional flags) lands, give such a command
-  a fixed flag set with no positional, or defer its positional forms to
-  `TestNotYetAllowed`. See README "Extending the whitelist".
+- **`AllowAnyPositional` is free; `ArgvDataSafe` + a flag-reachable side effect is
+  the trap.** Since §8, `matchGNU` validates flags by getopt *permutation* — even
+  after a positional — so a reader whose write/exec/network path is a flag
+  (`gh repo view --web`, `journalctl --vacuum-size`) can set `AllowAnyPositional`
+  safely; the unwhitelisted flag is rejected wherever it lands. The exception is
+  `ArgvDataSafe`: such a command keeps the fast path (first positional closes flag
+  parsing, rest is opaque data, so `cat file -X` allows `-X` as data), which is only
+  sound when it has no flag-reachable side effect at all. So never set `ArgvDataSafe`
+  on a spec with such a path. See README "Extending the whitelist" and `matchGNU`.
 - **Strict JSON decoder** (`event.go`): `DisallowUnknownFields`. When the Claude
   Code harness starts sending a new field on the event or inside `tool_input`,
   decoding exits 2 and BLOCKS the call. Fix: add the field as an ignored
