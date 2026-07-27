@@ -1972,6 +1972,46 @@ func jjSpec() *commandSpec {
 	// jj subcommands chosen for v1: read-only operations only.
 	return &commandSpec{
 		Style: styleGNU,
+		// Global options, which jj documents as appearing BEFORE the subcommand
+		// (`jj -R <path> log`). matchGNU validates pre-subcommand tokens against
+		// this parent flag set and does not inherit into Subcommands, so these
+		// must be declared here even though jjCommonFlags() repeats -R/--repository
+		// for the post-subcommand position (`jj log -R <path>`). Mirrors the
+		// `git -C <path>` precedent in gitSpec().
+		//
+		// Deliberately EXCLUDED from jj's real global set:
+		//   --config / --config-file  Inject arbitrary config -> an exec path,
+		//                             and not a theoretical one: ui.pager is
+		//                             spawned by exactly the read-only
+		//                             subcommands below (log/diff/show/op log
+		//                             all paginate by default), so
+		//                             `jj --config 'ui.pager=["sh","-c","…"]' log`
+		//                             runs an arbitrary program while looking
+		//                             like a read-only command. (ui.editor is
+		//                             NOT the example to reach for — `jj st`
+		//                             never launches an editor. The pager is
+		//                             what fires on the accelerated path.)
+		//                             Verified against jj 0.41 on a TTY.
+		//
+		// The rest are excluded for lack of logged demand, NOT because they are
+		// dangerous here. Worth being precise, since --ignore-immutable looks
+		// alarming and isn't: it only matters to a mutating subcommand, and no
+		// mutating subcommand is in the map below, so it cannot reach one —
+		// dispatchSubcommand misses and the command falls through with or
+		// without the flag. Unlike --config above, there is no exploit against a
+		// whitelisted subcommand. If a mutating subcommand is ever added the
+		// flag becomes load-bearing and should be reconsidered then; that is a
+		// reason to keep it out cheaply, not a present risk.
+		//   --ignore-immutable        disables the immutable-commit guard;
+		//                             inert before a read-only subcommand
+		//   --at-operation            read-only in effect, but selects a whole
+		//                             alternate repo view
+		//   --ignore-working-copy, --debug, --color, --quiet, -V/--version
+		Flags: []flagSpec{
+			{Short: "R", Long: "repository", TakesArg: true},
+			{Long: "no-pager"},
+			{Long: "help"},
+		},
 		Subcommands: map[string]*commandSpec{
 			"status":    {Style: styleGNU, AllowAnyPositional: true, Flags: jjCommonFlags()},
 			"st":        {Style: styleGNU, AllowAnyPositional: true, Flags: jjCommonFlags()},
