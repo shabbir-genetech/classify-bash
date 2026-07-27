@@ -31,7 +31,9 @@ type event struct {
 	AgentID        json.RawMessage `json:"agent_id"`
 	AgentType      json.RawMessage `json:"agent_type"`
 	Effort         json.RawMessage `json:"effort"`
-	PromptID       json.RawMessage `json:"prompt_id"`
+	// PromptID correlates the call to the originating prompt. Enumerated (not
+	// read) so the strict decoder doesn't block Bash calls that carry it.
+	PromptID json.RawMessage `json:"prompt_id"`
 }
 
 // toolInput is the Bash tool's input shape. command is the only field we

@@ -55,9 +55,26 @@ exit 2 — which *blocks the Bash call*. The fix for any future field is mechani
 add it as an ignored `json.RawMessage` in the right struct (a top-level field goes
 on `event`, a `tool_input` field goes on `toolInput` in `event.go`), add an
 accept-test covering an event that carries it, and rebuild. No `go.mod` change, so
-the vendor hash is unaffected. This has already happened once for an `effort`
-field that the harness began attaching both inside `tool_input` and at the top
-level — both structs now carry an ignored `Effort`.
+the vendor hash is unaffected.
+
+This has now happened repeatedly — the strict decoder is deliberately a tripwire,
+and each new harness field trips it until enumerated:
+
+- `effort` — attached both inside `tool_input` and at the top level; both structs
+  carry an ignored `Effort`.
+- `agent_id` / `agent_type` — sub-agent Bash calls; ignored on `event`.
+- `prompt_id` — top-level, correlates the call to the originating prompt; ignored
+  on `event`.
+- `dangerouslyDisableSandbox` — inside `tool_input` on sandbox-disabled calls;
+  ignored on `toolInput`.
+
+We keep `DisallowUnknownFields` on purpose — a silently-ignored field could be one
+that changes what the command *does*, and we would rather block than ship a stale
+classifier. The cost is real and worth naming: the fix itself requires Bash, and on
+a deployed consumer the hook blocks the very commands (`nix flake lock`, rebuild)
+needed to pick up the fix. Recovery is the `!` prompt prefix, which runs in the
+user's own shell and skips the hook. If a new field appears mid-session, reach for
+`!` first, then apply the mechanical fix above.
 
 ## Logging non-allowed commands
 
