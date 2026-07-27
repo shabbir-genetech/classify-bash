@@ -462,7 +462,6 @@ var safeCommands = map[string]*commandSpec{
 			{Short: "V", Long: "version-sort"},
 			{Short: "z", Long: "zero-terminated"},
 			{Long: "batch-size", TakesArg: true},
-			{Long: "compress-program", TakesArg: true},
 			{Long: "debug"},
 			{Long: "files0-from", TakesArg: true},
 			{Long: "parallel", TakesArg: true},
@@ -471,6 +470,11 @@ var safeCommands = map[string]*commandSpec{
 			{Long: "help"},
 			{Long: "version"},
 			// NOT whitelisted (write): -o, --output
+			// NOT whitelisted (exec): --compress-program NAME names a program and
+			// sort runs it for spill files (verified: it executed). Same shape as
+			// jj's removed --tool — see jjCommonFlags(). Removed 2026-07-27.
+			// --random-source is kept: sort only READS bytes from that file
+			// (coreutils randread), it is never executed.
 		},
 		AllowAnyPositional: true,
 	},
@@ -2019,6 +2023,27 @@ func jjGitSpec() *commandSpec {
 	}
 }
 
+// jjCommonFlags is the post-subcommand flag set shared by the read-only jj
+// subcommands (`jj log -R <path>`), as opposed to jjSpec()'s pre-subcommand
+// globals.
+//
+// Two flags were REMOVED here on 2026-07-27 and must not come back:
+//
+//	--tool NAME   Names a merge-tool, i.e. an executable, and jj runs it.
+//	              `jj diff --tool /tmp/evil` classified allow and executed the
+//	              script (verified, jj 0.41: it ran, exit 0, no output). It was
+//	              reachable from diff/log/show and the op subcommands — every
+//	              read-only jj command this whitelist accelerates. There is no
+//	              read-only use for handing jj an external program.
+//	--config-toml Same class as jjSpec()'s excluded --config: injects config,
+//	              and ui.pager is spawned by these very subcommands. Inert only
+//	              by accident — jj 0.41 removed the flag name, so the command
+//	              errors before executing. That is a version accident, not a
+//	              safety property; the replacement (--config) is deliberately
+//	              absent here and from jjSpec().
+//
+// The general rule both violate: a flag whose value is a program name, or that
+// can set one, is an exec path regardless of how read-only the subcommand is.
 func jjCommonFlags() []flagSpec {
 	return []flagSpec{
 		{Short: "r", Long: "revision", TakesArg: true},
@@ -2028,14 +2053,12 @@ func jjCommonFlags() []flagSpec {
 		{Long: "name-only"},
 		{Long: "git"},
 		{Long: "color-words"},
-		{Long: "tool", TakesArg: true},
 		{Long: "no-pager"},
 		{Long: "no-graph"},
 		{Long: "reversed"},
 		{Long: "limit", TakesArg: true},
 		{Long: "template", TakesArg: true},
 		{Short: "T", TakesArg: true},
-		{Long: "config-toml", TakesArg: true},
 		{Long: "repository", TakesArg: true},
 		{Short: "R", TakesArg: true},
 		{Long: "help"},
@@ -2130,6 +2153,35 @@ func devenvShellSpec() *commandSpec {
 	}
 }
 
+// nixGenericSpec backs `nix eval` and friends. It accepts INSTALLABLES
+// (`nix eval .#pkg`, `nix eval nixpkgs#hello.version`) but deliberately NOT
+// caller-authored Nix source.
+//
+// Removed 2026-07-27 — Nix evaluation is not a read-only sandbox:
+//
+//	--expr EXPR   arbitrary Nix. Verified: `--impure --expr
+//	              'builtins.readFile /etc/hostname'` returned the file, and
+//	              `builtins.fetchurl` made real outbound requests — i.e. read a
+//	              secret, exfiltrate it via URL. fetchurl does not even need
+//	              --impure.
+//	--file PATH   same hole via a file: `nix eval --impure --file /tmp/x.nix`
+//	              evaluates whatever that file contains (verified).
+//	--apply EXPR  arbitrary Nix applied to the result; same evaluator.
+//
+// --impure stays: on its own it only relaxes purity for an installable the
+// caller already named literally, with no evaluator input to inject once the
+// three flags above are gone.
+//
+// --arg/--argstr stay, but only because --file went with them: --arg's value IS
+// a Nix expression, so it would be an injection point if it had an evaluator to
+// reach. It does not. Verified against nix 2.x: with a flake installable it is
+// refused outright ("'--arg' and '--argstr' are incompatible with flakes"), and
+// the non-flake form it needs is exactly `-f/--file`. If --file is ever
+// restored, --arg/--argstr must be reconsidered in the same change.
+//
+// Same rule as jjCommonFlags(): a flag whose value is a program — or a program
+// text the tool will evaluate — is an exec path however read-only the
+// subcommand looks.
 func nixGenericSpec() *commandSpec {
 	return &commandSpec{
 		Style: styleGNU,
@@ -2138,13 +2190,10 @@ func nixGenericSpec() *commandSpec {
 			{Long: "raw"},
 			{Long: "no-link"},
 			{Long: "out-link", TakesArg: true},
-			{Long: "expr", TakesArg: true},
-			{Long: "file", TakesArg: true},
 			{Long: "include", TakesArg: true},
 			{Long: "arg", TakesArg: true},
 			{Long: "argstr", TakesArg: true},
 			{Long: "impure"},
-			{Long: "apply", TakesArg: true},
 			{Long: "read-only"},
 			{Long: "all"},
 			{Long: "recursive"},
