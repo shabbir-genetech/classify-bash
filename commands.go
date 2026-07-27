@@ -1799,9 +1799,11 @@ func gitCatFileSpec() *commandSpec {
 			{Long: "batch-check"},
 			{Long: "buffer"},
 			{Long: "follow-symlinks"},
-			{Long: "textconv"},
-			{Long: "filters"},
 			{Long: "path", TakesArg: true},
+			// NOT whitelisted (exec): --textconv and --filters run a program
+			// named by gitattributes/git-config (diff.<d>.textconv,
+			// filter.<f>.clean). Verified: `git cat-file --textconv` executed
+			// the configured filter. Same class as jj --tool. Removed 2026-07-27.
 			{Long: "help"},
 		},
 		AllowAnyPositional: true,
@@ -1960,8 +1962,10 @@ func gitGrepSpec() *commandSpec {
 			{Long: "untracked"},
 			{Long: "no-index"},
 			{Long: "no-textconv"},
-			{Long: "textconv"},
 			{Long: "threads", TakesArg: true},
+			// NOT whitelisted (exec): --textconv runs the gitattributes-configured
+			// textconv program. Verified: `git grep --textconv` executed it.
+			// --no-textconv stays (it only DISABLES that path). Removed 2026-07-27.
 			{Long: "help"},
 		},
 		AllowAnyPositional: true,

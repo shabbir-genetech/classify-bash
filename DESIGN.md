@@ -77,9 +77,30 @@ built for exactly this; no change was needed. The one thing that *does* pass is
 `ENVIRON` — deliberate, since bare `env` and `printenv` are whitelisted at Tier
 A and dump the environment more directly.
 
-Areas *not* covered by that sweep, and still open: subcommand-shaped exec paths
-(`docker inspect --format` templates, `systemctl --property`) and format strings
-that might shell out (`git log --pretty` placeholders).
+The format-string and property-selector shapes were audited on 2026-07-27 and
+are clean, with one exception found along the way:
+
+- **`docker --format`** is Go `text/template`. It can only call functions the
+  host registers and methods on the value being rendered; docker registers
+  string helpers (`json`, `lower`, `split`) and no filesystem or exec access
+  (`{{env "HOME"}}`, `{{exec "id"}}`, `{{os.ReadFile …}}` all fail to parse).
+- **`systemctl --property`** is a pure selector — an unknown name yields empty
+  output, nothing is evaluated.
+- **`git --pretty`/`--format`** placeholders are formatting directives only; no
+  placeholder invokes a program.
+- **`git --textconv` / `--filters` were an exec path and have been removed.**
+  They run a program named by gitattributes/git-config
+  (`diff.<d>.textconv`, `filter.<f>.clean`). Verified: both
+  `git cat-file --textconv` and `git grep --textconv` executed the configured
+  filter. They were whitelisted on `git cat-file` and `git grep` — note the
+  earlier pass called git "clean" after testing `--textconv` only on `git log`
+  and `git blame`, where it is *not* whitelisted. **Checking a flag on one
+  subcommand says nothing about its siblings; check the spec data, not one
+  invocation.** `--no-textconv` is kept: it only disables the path.
+
+This one differs from the others in threat model — it needs attacker-controlled
+repo config to do anything — but an allowed command executing a program at all
+breaks the contract, so it goes.
 
 ### Tiers
 

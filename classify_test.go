@@ -550,6 +550,12 @@ func TestMustNotAllow(t *testing.T) {
 		"nix eval -f /tmp/evil.nix",
 		`nix eval --apply 'x: builtins.readFile /etc/shadow' .#foo`,
 		`nix derivation show --expr 'x'`,
+		// git --textconv/--filters run a gitattributes-configured program.
+		// Verified: `git cat-file --textconv` and `git grep --textconv` both
+		// executed the filter. Whitelisted on cat-file/grep until 2026-07-27.
+		"git cat-file --textconv HEAD:f.bin",
+		"git cat-file --filters HEAD:f.bin",
+		"git grep --textconv pattern HEAD",
 
 		// nix subcommands outside whitelist
 		"nix build .",
