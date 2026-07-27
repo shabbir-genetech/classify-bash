@@ -179,14 +179,33 @@ command, e.g. `"command": "classify-bash --log --log-to=auto"`.
 
 1. Audit ALL flags in the manpage for the command you want to add. Pick the
    ones that cannot mutate state.
-2. Add a `commandSpec` entry in `commands.go` enumerating those flags
+2. **For every flag that takes a value, ask what the value *is*.** "Read-only
+   command" is not enough — a reader can hand its argument to `execve`. Reject
+   any flag whose value is:
+   - **a program name or path** — `jj --tool`, `sort --compress-program`,
+     `rg --pre`, `git -c core.pager=…`, `--exec`/`--editor`/`--pager`/`--filter`
+     shapes generally;
+   - **text the tool will evaluate** — `nix eval --expr`/`--file`/`--apply`
+     (Nix reads files and reaches the network), any `--eval`/`--script` shape;
+   - **a config key/file that can set either of the above** — `jj --config`
+     sets `ui.pager`, which the read-only subcommands then spawn.
+
+   Each of these was found *shipped* in this whitelist, not hypothesised. The
+   rule: **a flag whose value is a program — or a program text the tool will
+   evaluate — is an exec path however read-only the subcommand looks.** When in
+   doubt, run the command with the flag pointed at a script that touches a
+   marker file, and check whether the marker appears.
+3. Add a `commandSpec` entry in `commands.go` enumerating those flags
    positively. Document any deliberately-excluded flags in a comment so
-   future reviewers see that they were considered.
-3. Add `TestMustAllow` cases for the new safe forms and `TestMustNotAllow` cases
-   for each known write-mode flag plus an `--unknown-flag` form. If you implement
-   a deferred feature (e.g. a new flag style), also move the now-supported cases
-   out of `TestNotYetAllowed` into `TestMustAllow`.
-4. `nix flake check` must pass before the change can be trusted.
+   future reviewers see that they were considered — and say *which* kind of
+   exclusion it is: a demonstrated exec/write path, or merely no logged demand.
+   Conflating the two makes the next reader distrust the whole list.
+4. Add `TestMustAllow` cases for the new safe forms and `TestMustNotAllow` cases
+   for each known write-mode flag, each exec-path flag from step 2, plus an
+   `--unknown-flag` form. If you implement a deferred feature (e.g. a new flag
+   style), also move the now-supported cases out of `TestNotYetAllowed` into
+   `TestMustAllow`.
+5. `nix flake check` must pass before the change can be trusted.
 
 To also let a command receive an **attacker-controlled argv token** — be
 **wrappable by `xargs`** *and* accept a `"$(...)"` command-substitution operand —

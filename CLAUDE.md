@@ -133,6 +133,18 @@ jj.)
   extending, follow the checklist in README "Extending the whitelist" and add
   `mustAllow` cases plus the matching wall (`mustNotAllow`) / deferred-safe
   (`TestNotYetAllowed`) cases.
+- **A flag whose value is a program is an exec path** — however read-only the
+  command looks. Enumerating flag *names* says nothing about what a *value*
+  means, and this is where the whitelist has actually been wrong: `jj --tool`
+  and `sort --compress-program` (value is a program), `nix eval --expr/--file`
+  (value is evaluated — reads files, reaches the network), `jj --config` (value
+  sets `ui.pager`, which the read-only subcommands spawn). All were shipped, not
+  hypothetical. When adding any command, walk every `TakesArg` flag and ask what
+  the value *is*; when in doubt, point it at a marker script and look. Note
+  inertness is not safety (`--config-toml` was harmless only because jj 0.41
+  dropped the name), and say in the comment whether an exclusion is a
+  demonstrated exec path or merely no logged demand. See DESIGN.md "Flag values
+  that are programs" and README "Extending the whitelist" step 2.
 - **`ArgvDataSafe` is the one gate for attacker-controlled argv.** A command may
   receive an unseen operand (from `xargs` stdin or a `$(...)` substitution) only if
   its spec sets `ArgvDataSafe` — true only when it has no write/exec/network path

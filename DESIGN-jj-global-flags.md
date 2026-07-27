@@ -171,52 +171,18 @@ change; noted so it isn't mistaken for a finding later.
 
 ## Follow-on: two exec paths found in `jjCommonFlags()`
 
-Auditing the *post*-subcommand flag set for the same config gap turned up a
-shipped hole unrelated to this change:
+Auditing the *post*-subcommand flag set for the same config gap turned up two
+shipped holes unrelated to this change — `--tool` (arbitrary execution,
+verified) and `--config-toml` (config injection, inert only by jj-version
+accident). Both removed and pinned in `TestMustNotAllow`.
 
-- **`--tool NAME` was arbitrary execution.** It names a merge-tool — an
-  executable — and jj runs it. `jj diff --tool /tmp/evil` classified **allow**
-  and executed the script (verified on jj 0.41: ran, exit 0, no output).
-  Reachable from `diff`, `log`, `show`, and the `op` subcommands, i.e. every
-  read-only jj command the whitelist accelerates. **Removed.**
-- **`--config-toml` was whitelisted** — the same config-injection class as the
-  `--config` this design excludes at the parent. Currently inert only because jj
-  0.41 removed the flag name, so the command errors before executing. A version
-  accident, not a safety property. **Removed**; the replacement `--config` was
-  never whitelisted in either position.
-
-Both are pinned in `TestMustNotAllow`. The generalizable rule, now in the
-`jjCommonFlags()` comment: *a flag whose value is a program name — or a program
-text the tool will evaluate — is an exec path regardless of how read-only the
-subcommand is.*
-
-## Sweep of all other specs (2026-07-27)
-
-Enumerated all 374 arg-taking flags across every spec and audited each for the
-above shape. Two more removals:
-
-- **`sort --compress-program NAME`** — names a program, sort runs it for spill
-  files. Verified executing. Removed. (`--random-source` kept: coreutils only
-  reads bytes from that file.)
-- **`nix eval --expr / --file / --apply`** — Nix evaluation is not a read-only
-  sandbox. Verified: `--impure --expr 'builtins.readFile /etc/hostname'`
-  returned the file, and `builtins.fetchurl` made real outbound requests — read
-  a secret, exfiltrate by URL; `fetchurl` needs no `--impure`. `--file` is the
-  same hole via a path. Removed all three; `nix eval .#attr` (the common
-  interactive form) still accelerates. `--arg`/`--argstr` are kept only because
-  `--file` went with them — their values *are* Nix expressions, but flakes
-  refuse them and the non-flake form they need is `-f/--file`. Restoring
-  `--file` means reconsidering them in the same change.
-
-Audited clean, no change needed:
-
-- **`find`** — `-exec`, `-execdir`, `-ok`, `-okdir`, `-delete`, `-fprintf`,
-  `-fprint`, `-fls` all already fall through; only `-printf`/`-ls` pass.
-- **`git`** — `-c` was never whitelisted, closing the config-injection class;
-  `--ext-diff` and `--textconv` also reject.
-- **`rg`** — `--pre`, `--hostname-bin` not whitelisted.
-- **`xargs --max-procs`** — a count, not a program.
-- No other `--tool`/`--exec`/`--editor`/`--pager` names anywhere in the data.
+That finding generalised into a rule and a sweep of all 374 arg-taking flags in
+the whitelist, which removed `sort --compress-program` and
+`nix eval --expr/--file/--apply` as well. Because the rule applies to every
+command and not just `jj`, it lives in **DESIGN.md, "Flag values that are
+programs"** — with the full sweep results, the areas still unaudited, and the
+`--random-source` counter-example — rather than here. The checklist form is
+README "Extending the whitelist" step 2.
 
 ## Out of scope
 

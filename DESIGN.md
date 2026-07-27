@@ -22,6 +22,58 @@ fall through. We never write "allow X except when Y": a future release of some
 tool may add a state-mutating `Z` we did not anticipate, and an
 allow-except-list would wave it through. A positive list fails closed instead.
 
+### Flag values that are programs
+
+A positive whitelist enumerates flag *names*. It says nothing about what a
+flag's *value* means, and that is where this classifier has actually been
+wrong. A command can be a pure reader and still hand an argument straight to
+`execve`:
+
+> **A flag whose value is a program — or a program text the tool will evaluate
+> — is an exec path however read-only the subcommand looks.**
+
+Three shapes, all found *shipped* in this whitelist during the 2026-07-27 sweep,
+none hypothesised:
+
+- **The value is a program.** `jj diff --tool /tmp/evil` classified allow and
+  executed the script; `sort --compress-program NAME` runs NAME for spill files.
+  Both were whitelisted on otherwise-correct read-only specs.
+- **The value is evaluated.** `nix eval --expr` is not a sandbox:
+  `--impure --expr 'builtins.readFile /etc/hostname'` returns the file, and
+  `builtins.fetchurl` performs real outbound requests — read a secret,
+  exfiltrate by URL. `--file` is the same hole via a path.
+- **The value sets one of the above.** `jj --config 'ui.pager=…'` is an exec
+  path because `log`/`diff`/`show` spawn the pager — the injected program runs
+  on precisely the subcommands the whitelist accelerates.
+
+Two consequences worth stating, because both bit us:
+
+*Inertness is not safety.* `jj --config-toml` was whitelisted and harmless only
+because jj 0.41 had removed that flag name. A version accident is not a
+property; it was excluded on the class instead.
+
+*Removing one hole can be what makes a neighbour safe — say so.* `nix`'s
+`--arg`/`--argstr` values are Nix expressions, and they survive the sweep only
+because `--file` was removed in the same change: flakes refuse them, and the
+non-flake form they need is `-f/--file`. That dependency is recorded at
+`nixGenericSpec()` so restoring `--file` forces a re-review rather than
+silently reopening the hole.
+
+The counter-example that shows the rule has an edge: `sort --random-source=FILE`
+*looks* identical in shape but is kept, because coreutils only reads bytes from
+that file and never executes it. Shape is the trigger for the question, not the
+answer — check what the tool does with the value.
+
+The audit method that found these is mechanical and worth repeating when adding
+commands: enumerate every flag with `TakesArg`, and for each ask what the value
+is. See README "Extending the whitelist" step 2 for the checklist form.
+
+Areas *not* covered by that sweep, and still open: subcommand-shaped exec paths
+(`docker inspect --format` templates, `systemctl --property`), format strings
+that might shell out (`git log --pretty` placeholders), and whether
+`classifyAwkProgram` excludes awk's `system()` and `|"cmd"` — awk is a full
+language and is whitelisted.
+
 ### Tiers
 
 - **A — no-subcommand reads** (`cat`, `ls`, `grep`, `cd`) plus stdout-only
