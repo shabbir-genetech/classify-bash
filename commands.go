@@ -2424,7 +2424,10 @@ func journalctlSpec() *commandSpec {
 			{Short: "p", Long: "priority", TakesArg: true},
 			{Short: "g", Long: "grep", TakesArg: true},
 			{Long: "case-sensitive", OptionalArg: true},
-			{Short: "b", Long: "boot", OptionalArg: true},
+			{Short: "b", Long: "boot", OptionalArg: true, DashValueOK: true},
+			// ^ DashValueOK: -b's value is a ±offset ("journalctl -b -1" = the boot
+			// before last), so the documented spelling collides with flag syntax.
+			// Digits-only, one token — see flagSpec.DashValueOK.
 			{Short: "k", Long: "dmesg"},
 			{Short: "o", Long: "output", TakesArg: true},
 			{Long: "output-fields", TakesArg: true},

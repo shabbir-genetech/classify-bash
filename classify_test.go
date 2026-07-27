@@ -173,6 +173,11 @@ func TestMustAllow(t *testing.T) {
 		"jj -R /tmp git remote list",
 		"jj -R /tmp op log",
 		"jj --no-pager log",
+		// journalctl -b takes a ±offset, whose spelling collides with flag syntax.
+		"journalctl -b -1",
+		"journalctl --boot -1",
+		"journalctl -b -1 -u sshd",
+		"journalctl -b +2",
 
 		// Tier B — nix
 		"nix eval .#packages.x86_64-linux.default.version",
@@ -556,6 +561,10 @@ func TestMustNotAllow(t *testing.T) {
 		"git cat-file --textconv HEAD:f.bin",
 		"git cat-file --filters HEAD:f.bin",
 		"git grep --textconv pattern HEAD",
+		// DashValueOK must not widen past a bare signed integer.
+		"journalctl -b --vacuum-size=1G",
+		"journalctl -b -1 --vacuum-size=1G",
+		"journalctl -b -1x",
 
 		// nix subcommands outside whitelist
 		"nix build .",

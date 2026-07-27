@@ -46,6 +46,34 @@ type flagSpec struct {
 	OptionalArg bool   // accepts `--name=value` form but does NOT consume a separate next arg
 	// Examples: ls --color (none) / --color=auto (with) — OptionalArg=true.
 	// vs. git log --pretty=foo or git log --pretty foo — TakesArg=true.
+
+	// DashValueOK lets an OptionalArg flag consume a FOLLOWING token that starts
+	// with `-`, but only when that token is a bare signed integer (`-1`, `+2`).
+	// Exists for `journalctl -b -1` ("the boot before last"): -b's value is a
+	// ±offset, so the natural spelling collides with flag syntax and `-1` would
+	// otherwise be rejected as an unknown flag. `journalctl -b 0` and `-b all`
+	// already worked, because a non-dash value is swallowed by
+	// AllowAnyPositional.
+	//
+	// Deliberately narrow. The value must match ^[+-][0-9]+$, so this can never
+	// consume a real flag (`-u`, `--vacuum-size`): the widening is one token,
+	// digits only. Do NOT set it on a TakesArg flag — there the value is already
+	// consumed unconditionally, dashes and all.
+	DashValueOK bool
+}
+
+// isSignedInt reports whether tok is a bare signed integer like "-1" or "+2".
+// Used only by DashValueOK; see the field comment for why it is this strict.
+func isSignedInt(tok string) bool {
+	if len(tok) < 2 || (tok[0] != '-' && tok[0] != '+') {
+		return false
+	}
+	for _, c := range tok[1:] {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // commandSpec is a strict whitelist for one command (or subcommand).
@@ -215,6 +243,11 @@ func (s *commandSpec) matchGNU(args []argToken) bool {
 						return false // a flag's value must be literal, never substituted
 					}
 					i++ // consume required value
+				} else if f.DashValueOK && i+1 < len(args) &&
+					!args[i+1].subst && isSignedInt(args[i+1].lit) {
+					// `--boot -1`: an OptionalArg flag whose ±offset value would
+					// otherwise parse as an unknown flag. Digits only — see DashValueOK.
+					i++
 				}
 				// !hasVal && !TakesArg: fine (OptionalArg or no-arg flag, both work)
 				i++
@@ -246,6 +279,13 @@ func (s *commandSpec) matchGNU(args []argToken) bool {
 							}
 							consumedNext = true
 						}
+						break
+					}
+					if f.DashValueOK && j == len(cluster)-1 && i+1 < len(args) &&
+						!args[i+1].subst && isSignedInt(args[i+1].lit) {
+						// `-b -1`: only when this flag ENDS the cluster, so the offset
+						// belongs to it and not to an earlier letter. Digits only.
+						consumedNext = true
 						break
 					}
 				}
