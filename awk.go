@@ -21,6 +21,16 @@ import (
 //   - CallExpr whose builtin is not on the allowlist (notably: system, getline,
 //     close, fflush all rejected).
 //   - UserCallExpr (defense-in-depth — user functions already rejected upfront).
+//
+// Verified against all of the above on 2026-07-27 (see DESIGN.md "Flag values
+// that are programs" for the sweep this was part of): system(), print|"cmd",
+// "cmd"|getline, getline<file, print>file and close/fflush all fall through.
+//
+// ENVIRON IS readable (`awk 'BEGIN{for(k in ENVIRON) print k"="ENVIRON[k]}'`
+// classifies allow) and that is deliberate, not an oversight: bare `env` and
+// `printenv` are already whitelisted and dump the environment more directly, so
+// rejecting it here would buy nothing. If the environment ever stops being
+// readable at Tier A, revisit this too.
 func classifyAwkProgram(src string) bool {
 	prog, err := parser.ParseProgram([]byte(src), nil)
 	if err != nil {

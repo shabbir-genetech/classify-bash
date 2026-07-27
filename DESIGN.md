@@ -68,11 +68,18 @@ The audit method that found these is mechanical and worth repeating when adding
 commands: enumerate every flag with `TakesArg`, and for each ask what the value
 is. See README "Extending the whitelist" step 2 for the checklist form.
 
+**`awk` was audited separately and is clean** — worth recording, because it is
+the one place a full language is whitelisted and the natural next suspect.
+`system()`, `print | "cmd"`, `"cmd" | getline`, `getline < file`, `print > file`,
+`close`/`fflush` and user-defined functions all fall through, and each already
+had a `TestMustNotAllow` case. `classifyAwkProgram`'s positive node walk was
+built for exactly this; no change was needed. The one thing that *does* pass is
+`ENVIRON` — deliberate, since bare `env` and `printenv` are whitelisted at Tier
+A and dump the environment more directly.
+
 Areas *not* covered by that sweep, and still open: subcommand-shaped exec paths
-(`docker inspect --format` templates, `systemctl --property`), format strings
-that might shell out (`git log --pretty` placeholders), and whether
-`classifyAwkProgram` excludes awk's `system()` and `|"cmd"` — awk is a full
-language and is whitelisted.
+(`docker inspect --format` templates, `systemctl --property`) and format strings
+that might shell out (`git log --pretty` placeholders).
 
 ### Tiers
 
