@@ -192,6 +192,31 @@ your eye lands on. The findings and the resulting re-prioritization (un-whitelis
 levers; Tier-2 `--` and a `sed` parser confirmed ≈0 demand) live in
 [FUTURE-WORK.md](FUTURE-WORK.md) "Observed demand".
 
+**That note was not enough: use `TestTriage`.** The 2026-07-27 pass re-derived the
+bogus `cd`-prefix finding *despite* the paragraph above naming `cd` explicitly — a
+prose warning does not survive contact with a 2000-record corpus and an eager regex.
+The method is now code, in `triage_test.go`:
+
+```bash
+journalctl -t classify-bash -o cat > /tmp/corpus.jsonl
+CORPUS=/tmp/corpus.jsonl SINCE=2026-06-12 \
+  nix develop --command go test -run TestTriage -count=1 -v .
+```
+
+It reports the `failloud` health check, replays every record against the current
+whitelist to separate already-fixed noise from live gaps, and attributes **one**
+blocker per record by descending the same structure `classifyStmt` walks —
+`MISSING-CMD x` (absent from the whitelist), `SPEC-REJECT x @ tok [sub: y]` (present
+but the spec rejected `tok`), `EXPANSION-ARG x`, or a structural tag. `SHOW=<tag>`
+prints verbatim examples. Set `SINCE` to the date `commands.go` last changed
+(`jj log -r 'files(commands.go)'`); records older than that were judged by a
+different whitelist. Two traps it encodes, both of which produced wrong numbers
+before it existed: the hook **exits 0 for allow *and* fall-through** (only printed
+JSON distinguishes them, so exit-code probes report everything as allowed), and a
+missing *global* flag makes a read-only and a mutating use tip at the same token —
+`jj -R p log` vs `jj -R p commit` — so the `[sub: …]` split is what tells a real gap
+from the intended outcome.
+
 Two corpus-scale moves from the second pass (2026-06-10), both replay-based:
 - **"What would shipping/redeploying buy?"** Replay *every* logged fall-through
   through the new binary and count the ones that flip to allow. The log only holds

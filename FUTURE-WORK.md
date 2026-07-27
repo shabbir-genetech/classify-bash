@@ -91,6 +91,43 @@ the later `$T` expansion is rejected by `wordLiteral`. §6 must clear both.
   the usual design-first sign-off — but the log says they would retire the bulk of
   real read-only misses.
 
+## Observed demand — third pass (2026-07-27, `TestTriage`)
+
+1,976 records (2026-06-09 → 07-27), the first pass run with `triage_test.go`
+rather than by hand. Same caveat as before: one operator, one host — directional.
+Numbers below count records whose **primary blocker** is the named construct,
+restricted to the 1,746 logged after `commands.go` last changed (2026-06-11);
+the other 230 were judged by an older whitelist. Only 12 of the full 1,972
+fall-throughs would allow under the current build, so the corpus is live, not stale.
+
+- **Health: 4 `failloud`, all the strict-decoder tripwire** — `prompt_id` ×2 and
+  `dangerouslyDisableSandbox` ×1 from real traffic, `totally_new_field` ×1 from a
+  deliberate probe. Both real fields are now enumerated (`59e564fd`). No unknown
+  AST node, redirect op, or flag style has ever fired. This is the 4th instance of
+  the harness-field trap; expect a 5th.
+- **`jj` global flags before a subcommand — the one substantial new gap (~66).**
+  `-R`/`--repository` lives in `jjCommonFlags()` (attached to *subcommand* specs)
+  while top-level `jjSpec()` has `Flags: nil`, so `jj st` allows but
+  `jj -R <path> st` falls through. Read-only uses: `log` 29, `diff` 21, `status`/`st`
+  16. The same shape also blocks `commit` 118 / `git` 30 / `new` 17, which is the
+  correct outcome — count only the read-only subcommands. Pure whitelist data, no
+  classifier change.
+- **`journalctl -b -1` (14).** `-b` is `OptionalArg: true`, so the negative-number
+  value parses as a flag. A `matchGNU` edge case, not missing data.
+- **Structural, unchanged from the 2026-06 pass:** `<variable assignment>` 196 and
+  `<for/while loop>` 93 remain the two largest buckets. Both mostly wrap a mutating
+  `jj commit`, so the read-only payoff is far below the raw counts — §6/§7 stay
+  deferred on that basis.
+- **`sed` 67 / `pgrep` 44 — re-opened, contradicting the 2026-06 read.** The earlier
+  pass saw `sed` only as `-i` or inside already-rejected pipelines and called ROI ≈ 0
+  (§4). Post-freeze it is the largest `MISSING-CMD`, essentially all `sed -n '<range>p'
+  <file>` on this host. `pgrep -af <pattern>` is a clean read-only leaf and a good
+  `ArgvDataSafe` candidate. Neither is approved; `sed` still needs §4's parser
+  question answered (`-i`, and the `w`/`W`/`s///w` write commands) before a spec.
+- **Correctly rejected, no action:** `curl` 61 (network), `mariadb`/`mysql` 51,
+  `rm` 17, `kill` 18, `pkexec`/`nrs` 24, `devenv shell`/`up`/`processes` 134
+  (execution wrappers, see §2's "Deferred wrapper shape"), `python3`/`bash` 33.
+
 ---
 
 ## 1. Command substitution `$(...)` — **IMPLEMENTED (v1 — Tier 1)**

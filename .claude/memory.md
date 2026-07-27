@@ -21,6 +21,35 @@ README.md — this file is for how we work, not what the code is.)
   bucketing fall-throughs. Note each triage pass adds self-referential records (the
   `journalctl`/`python3` heredoc analysis commands fall through too). See DESIGN.md
   "Reading the log".
+- **Triage the log with `TestTriage`, never by hand.** `triage_test.go` is the
+  supported path and replaces ad-hoc analysis:
+
+  ```bash
+  journalctl -t classify-bash -o cat > /tmp/corpus.jsonl
+  CORPUS=/tmp/corpus.jsonl SINCE=<date commands.go last changed> \
+    nix develop --command go test -run TestTriage -count=1 -v .
+  ```
+
+  It calls `classifyCommand`/`safeCommands` directly, so its verdicts are the
+  classifier's own; add `SHOW=<tag>` to print verbatim examples for a tag. It
+  skips without `CORPUS`, so `go test ./...` is unaffected. Three reasons not to
+  hand-roll this again, each a bug that shipped a wrong conclusion:
+  - **Never regex-split a command to find the blocker.** Splitting on `&&`/`;`
+    blames the line's first token, so `cd /repo && devenv up` reads as a `cd`
+    problem. Two separate passes (2026-06-09, 2026-07-27) "discovered" a needed
+    `cd`-prefix feature this way; `cd` has been whitelisted since 2026-06-02.
+  - **Never judge allow/fall-through by exit code.** The hook exits 0 for *both*;
+    the only signal is whether it prints allow JSON. A shell helper testing `&&`
+    on the exit code reports everything as ALLOW and silently invalidates a whole
+    probe table.
+  - **Split the corpus at the last `commands.go` change** (`jj log -r
+    'files(commands.go)'`). Older records were judged by an older whitelist, so
+    they overstate the gaps; `TestTriage` reports that split for you.
+- **A gap is only real if the *subcommand* is read-only.** When a global flag is
+  missing from a parent spec, every use tips at that flag — `jj -R <path> log`
+  (a real gap) and `jj -R <path> commit` (correct rejection) look identical until
+  you split by subcommand. Conflating them overstated one finding ~4x. `TestTriage`
+  tags these `[sub: …]` for this reason.
 - **Cross-compile when touching imports**: the dev shell `go test` and `nix flake
   check` build only for the host (Linux), so they miss cross-platform breaks (a
   Unix-only stdlib import can pass them and still fail on Windows). Sanity-check
