@@ -106,14 +106,28 @@ fall-throughs would allow under the current build, so the corpus is live, not st
   AST node, redirect op, or flag style has ever fired. This is the 4th instance of
   the harness-field trap; expect a 5th.
 - **`jj` global flags before a subcommand — the one substantial new gap (~66).**
+  **IMPLEMENTED 2026-07-27** (`rnrrlwul`); see DESIGN-jj-global-flags.md. A
+  dedicated re-count over the same corpus put the read-only win at 147 records,
+  higher than the ~66 estimated here, because this pass counted only the three
+  subcommands named below while the whitelist covers more (`show`, `op log`,
+  `bookmark list`, `git remote list`).
   `-R`/`--repository` lives in `jjCommonFlags()` (attached to *subcommand* specs)
   while top-level `jjSpec()` has `Flags: nil`, so `jj st` allows but
   `jj -R <path> st` falls through. Read-only uses: `log` 29, `diff` 21, `status`/`st`
   16. The same shape also blocks `commit` 118 / `git` 30 / `new` 17, which is the
   correct outcome — count only the read-only subcommands. Pure whitelist data, no
   classifier change.
-- **`journalctl -b -1` (14).** `-b` is `OptionalArg: true`, so the negative-number
-  value parses as a flag. A `matchGNU` edge case, not missing data.
+- **`journalctl -b -1` (14). IMPLEMENTED 2026-07-27** (`rnkurlso`) via a new
+  `flagSpec.DashValueOK`. The diagnosis recorded here — "`-b` is `OptionalArg`,
+  so the negative-number value parses as a flag" — was **wrong in its
+  implication**, and the correction is the useful part: `OptionalArg` is behaving
+  correctly (it means "`--name=value` only, never consume the next token"), and
+  `journalctl -b 0` / `-b all` *already* classified allow, because
+  `AllowAnyPositional` swallows a non-dash value. Only a **dash-prefixed** value
+  failed. So this was not a `matchGNU` bug to fix but a missing capability to
+  express: "this flag may take a dash-prefixed value". `DashValueOK` consumes one
+  following token matching `^[+-][0-9]+$` — digits only, so it can never swallow a
+  real flag.
 - **Structural, unchanged from the 2026-06 pass:** `<variable assignment>` 196 and
   `<for/while loop>` 93 remain the two largest buckets. Both mostly wrap a mutating
   `jj commit`, so the read-only payoff is far below the raw counts — §6/§7 stay
@@ -124,6 +138,8 @@ fall-throughs would allow under the current build, so the corpus is live, not st
   <file>` on this host. `pgrep -af <pattern>` is a clean read-only leaf and a good
   `ArgvDataSafe` candidate. Neither is approved; `sed` still needs §4's parser
   question answered (`-i`, and the `w`/`W`/`s///w` write commands) before a spec.
+  Both remain open after the 2026-07-27 session — they are now the two largest
+  known accelerator gaps.
 - **Correctly rejected, no action:** `curl` 61 (network), `mariadb`/`mysql` 51,
   `rm` 17, `kill` 18, `pkexec`/`nrs` 24, `devenv shell`/`up`/`processes` 134
   (execution wrappers, see §2's "Deferred wrapper shape"), `python3`/`bash` 33.
@@ -502,3 +518,55 @@ A recurring point of confusion worth stating once:
   controlled* operand (from `xargs` stdin or `$(...)`). They are strict subsets of
   the master list. Keep them as fields on the spec, not as parallel maps, so a
   command name is never written down twice.
+
+## 9. Exec-path flag audit — **PARTIALLY DONE (2026-07-27), re-audit outstanding**
+
+Not a feature; a class of defect and the work still owed against it. The rule and
+the completed findings live in DESIGN.md "Flag values that are programs" — this
+section records only what is *left to do*, so it does not drift out of the
+roadmap.
+
+### What happened
+
+A single question — "this flag takes a value; what *is* the value?" — turned up
+**five shipped exec paths** in whitelist data that had been reviewed before:
+`jj --tool`, `sort --compress-program`, `nix eval --expr/--file/--apply`,
+`jj --config-toml` (inert only by jj-version accident), and
+`git --textconv/--filters` on `cat-file`/`grep`. All are removed and pinned.
+
+The defect was never one careless review. It is that "is this flag read-only?"
+is the wrong question and nobody was asking the right one. `jj --tool` mutates
+nothing *itself*; it just names the program that does.
+
+### Still outstanding
+
+1. **Re-audit the specs that predate the rule.** The sweep enumerated all 374
+   `TakesArg` flags and checked the obvious program-valued shapes, but only
+   `jj`, `sort`, `nix`, `git`, `find`, `rg`, `xargs` and `awk` were walked
+   properly. `docker`, `systemctl` and `gh` are the largest specs given only a
+   format-flag spot-check. Expect a low but non-zero yield — `git` looked clean
+   twice before `--textconv` turned up.
+2. **Sibling-subcommand check.** The `--textconv` miss came from testing a flag
+   on `git log`/`git blame` (where it is not whitelisted) and concluding "git is
+   clean" — it was whitelisted on `cat-file` and `grep`. Any audit must walk the
+   spec data per subcommand, not sample invocations. Worth a mechanical helper:
+   dump every (subcommand, flag) pair rather than eyeballing.
+3. **Consider a standing test.** Everything found is pinned individually in
+   `TestMustNotAllow`, but nothing *prevents the next one*. An enumeration test
+   that fails when a spec adds a `TakesArg` flag whose name matches a suspicious
+   set (`tool`, `exec`, `pager`, `editor`, `program`, `expr`, `eval`, `filter`,
+   `command`, `textconv`, `config*`) would turn this from a periodic audit into a
+   tripwire. Cheap; the false-positive rate is the open question — `--filter` on
+   `docker ps` is a data selector, not a program.
+
+### Method that worked, for whoever picks this up
+
+Enumerate flags from the spec data programmatically (a throwaway `go test` that
+walks `safeCommands` and prints every `TakesArg` flag with its owning
+command/subcommand path), then for each ask what the value is. When the answer
+is unclear, point the flag at a script that touches a marker file and check
+whether the marker appears — that is how `--tool`, `--compress-program` and
+`--textconv` were each confirmed in under a minute. Do not reason from the man
+page alone: `nix eval --expr` reads as "evaluate an expression" and the
+consequence (arbitrary file read plus outbound network) only becomes obvious
+when you run it.

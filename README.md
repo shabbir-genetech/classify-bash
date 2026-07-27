@@ -232,6 +232,17 @@ already asserts. So: `AllowAnyPositional` is free to set; just never pair
 `ArgvDataSafe` with a spec that has any flag-reachable write/exec path. See
 FUTURE-WORK.md §5/§8 and `matchGNU`.
 
+**`DashValueOK: true`** (on an `OptionalArg` flag) lets that flag consume one
+following token that *starts with a dash*, but only when the token is a bare
+signed integer (`^[+-][0-9]+$`). It exists for `journalctl -b -1` ("the boot
+before last"), where the documented value is a ±offset and so collides with flag
+syntax. Note `journalctl -b 0` and `-b all` never needed it — a non-dash value is
+already swallowed by `AllowAnyPositional`; only dash-prefixed values were
+rejected. The digits-only restriction is what keeps it safe: it can never consume
+a real flag, so `journalctl -b --vacuum-size=1G` still falls through. Do not set
+it on a `TakesArg` flag (there the value is consumed unconditionally already),
+and do not widen it to non-numeric values without re-deriving that argument.
+
 ## Flag styles
 
 - **`styleGNU`** (default): standard `-x`/`--name`/`--name=value`/clustered

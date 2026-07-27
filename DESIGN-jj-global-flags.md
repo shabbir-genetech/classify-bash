@@ -1,8 +1,12 @@
 # Design: `jj` global flags before the subcommand
 
-Status: implemented 2026-07-27
+Status: implemented 2026-07-27 (`rnrrlwul`)
 Author: derived from the 2026-07-27 log triage
 Scope: `commands.go` whitelist data only — no classifier/`spec.go` change
+
+> This design shipped as written. Its lasting value is mostly the *follow-on*: the
+> `jjCommonFlags()` audit at the end turned into a whitelist-wide exec-path sweep
+> that found five shipped holes. See DESIGN.md "Flag values that are programs".
 
 ## Problem
 
@@ -130,7 +134,7 @@ Prototyped against the real classifier (`safeCommands["jj"]` swapped for the
 proposed spec) — 10 must-allow and 18 must-fall-through forms, all as intended:
 
 allowed: `jj -R <path> st` · `jj -R <path> log` ·
-`jj -R ~/gg/dev-shell log -r '@' --no-graph -T 'x'` ·
+`jj -R ~/src/some-repo log -r '@' --no-graph -T 'x'` ·
 `jj --repository /tmp/x diff --stat` · `jj -R /tmp bookmark list` ·
 `jj -R /tmp git remote list` · `jj -R /tmp op log` · `jj --no-pager log` · `jj st`
 
@@ -176,13 +180,17 @@ shipped holes unrelated to this change — `--tool` (arbitrary execution,
 verified) and `--config-toml` (config injection, inert only by jj-version
 accident). Both removed and pinned in `TestMustNotAllow`.
 
-That finding generalised into a rule and a sweep of all 374 arg-taking flags in
-the whitelist, which removed `sort --compress-program` and
-`nix eval --expr/--file/--apply` as well. Because the rule applies to every
-command and not just `jj`, it lives in **DESIGN.md, "Flag values that are
-programs"** — with the full sweep results, the areas still unaudited, and the
-`--random-source` counter-example — rather than here. The checklist form is
-README "Extending the whitelist" step 2.
+That finding generalised into a rule and a sweep of every arg-taking flag in the
+whitelist, which went on to remove `sort --compress-program`,
+`nix eval --expr/--file/--apply` and `git --textconv/--filters` — **five shipped
+exec paths in total**, across four tools, in data that had been reviewed before.
+Because the rule applies to every command and not just `jj`, it lives in
+**DESIGN.md, "Flag values that are programs"** — with the full results, the
+`--random-source` counter-example, and the `awk` audit that came back clean —
+rather than here. The checklist form is README "Extending the whitelist" step 2,
+and the work still outstanding is FUTURE-WORK.md §9.
+
+Commits: `smklrruo` (the first four), `lwyxtnnr` (git `--textconv`).
 
 ## Out of scope
 

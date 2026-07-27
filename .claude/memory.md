@@ -50,6 +50,22 @@ README.md — this file is for how we work, not what the code is.)
   (a real gap) and `jj -R <path> commit` (correct rejection) look identical until
   you split by subcommand. Conflating them overstated one finding ~4x. `TestTriage`
   tags these `[sub: …]` for this reason.
+- **Audit flags from the spec data, not from invocations.** Testing a flag on one
+  subcommand says nothing about its siblings: a 2026-07-27 pass concluded "git is
+  clean" after checking `--textconv` on `git log`/`git blame` (where it is not
+  whitelisted) and missed it on `cat-file`/`grep` (where it was, and where it
+  executed). Walk `safeCommands` programmatically — a throwaway `go test` that
+  prints every `TakesArg` flag with its owning command/subcommand path — then ask
+  of each value "what *is* this?". See FUTURE-WORK.md §9 and DESIGN.md "Flag
+  values that are programs".
+- **Confirm an exec path by running it, not by reading the man page.** Point the
+  flag at a script that touches a marker file and check for the marker. Three
+  findings were confirmed this way in under a minute each, and one *disconfirmed*
+  a plausible-sounding claim: `ui.editor` + `jj st` executes nothing (`st` never
+  opens an editor) — the real vector was `ui.pager`, which fires on `log`/`diff`.
+  Man pages describe intent; the marker file reports behaviour. Corollary: give
+  the probe script a non-blocking body (`touch marker` and exit) — an `exec cat`
+  tail once hung a `sort --compress-program` probe for two minutes.
 - **Cross-compile when touching imports**: the dev shell `go test` and `nix flake
   check` build only for the host (Linux), so they miss cross-platform breaks (a
   Unix-only stdlib import can pass them and still fail on Windows). Sanity-check

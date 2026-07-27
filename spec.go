@@ -47,18 +47,15 @@ type flagSpec struct {
 	// Examples: ls --color (none) / --color=auto (with) — OptionalArg=true.
 	// vs. git log --pretty=foo or git log --pretty foo — TakesArg=true.
 
-	// DashValueOK lets an OptionalArg flag consume a FOLLOWING token that starts
-	// with `-`, but only when that token is a bare signed integer (`-1`, `+2`).
-	// Exists for `journalctl -b -1` ("the boot before last"): -b's value is a
-	// ±offset, so the natural spelling collides with flag syntax and `-1` would
-	// otherwise be rejected as an unknown flag. `journalctl -b 0` and `-b all`
-	// already worked, because a non-dash value is swallowed by
-	// AllowAnyPositional.
+	// DashValueOK lets an OptionalArg flag consume a FOLLOWING token starting with
+	// `-`, but only when it is a bare signed integer (`-1`, `+2`). Exists for
+	// `journalctl -b -1` ("the boot before last"), where the value is a ±offset and
+	// so collides with flag syntax; `-b 0` and `-b all` never needed it, since
+	// AllowAnyPositional already swallows a non-dash value.
 	//
-	// Deliberately narrow. The value must match ^[+-][0-9]+$, so this can never
-	// consume a real flag (`-u`, `--vacuum-size`): the widening is one token,
-	// digits only. Do NOT set it on a TakesArg flag — there the value is already
-	// consumed unconditionally, dashes and all.
+	// The digits-only rule is what keeps this safe — it can never consume a real
+	// flag. Do not set it on a TakesArg flag (the value is consumed there anyway),
+	// and do not widen it to non-numeric values without re-deriving that argument.
 	DashValueOK bool
 }
 

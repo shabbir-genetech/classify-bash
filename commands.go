@@ -1976,41 +1976,18 @@ func jjSpec() *commandSpec {
 	// jj subcommands chosen for v1: read-only operations only.
 	return &commandSpec{
 		Style: styleGNU,
-		// Global options, which jj documents as appearing BEFORE the subcommand
-		// (`jj -R <path> log`). matchGNU validates pre-subcommand tokens against
-		// this parent flag set and does not inherit into Subcommands, so these
-		// must be declared here even though jjCommonFlags() repeats -R/--repository
-		// for the post-subcommand position (`jj log -R <path>`). Mirrors the
-		// `git -C <path>` precedent in gitSpec().
+		// Global options: jj documents these BEFORE the subcommand (`jj -R <path>
+		// log`). matchGNU checks pre-subcommand tokens against this parent flag set
+		// and does not inherit into Subcommands, so -R must be declared here as well
+		// as in jjCommonFlags(). Mirrors `git -C <path>` in gitSpec().
 		//
-		// Deliberately EXCLUDED from jj's real global set:
-		//   --config / --config-file  Inject arbitrary config -> an exec path,
-		//                             and not a theoretical one: ui.pager is
-		//                             spawned by exactly the read-only
-		//                             subcommands below (log/diff/show/op log
-		//                             all paginate by default), so
-		//                             `jj --config 'ui.pager=["sh","-c","…"]' log`
-		//                             runs an arbitrary program while looking
-		//                             like a read-only command. (ui.editor is
-		//                             NOT the example to reach for — `jj st`
-		//                             never launches an editor. The pager is
-		//                             what fires on the accelerated path.)
-		//                             Verified against jj 0.41 on a TTY.
-		//
-		// The rest are excluded for lack of logged demand, NOT because they are
-		// dangerous here. Worth being precise, since --ignore-immutable looks
-		// alarming and isn't: it only matters to a mutating subcommand, and no
-		// mutating subcommand is in the map below, so it cannot reach one —
-		// dispatchSubcommand misses and the command falls through with or
-		// without the flag. Unlike --config above, there is no exploit against a
-		// whitelisted subcommand. If a mutating subcommand is ever added the
-		// flag becomes load-bearing and should be reconsidered then; that is a
-		// reason to keep it out cheaply, not a present risk.
-		//   --ignore-immutable        disables the immutable-commit guard;
-		//                             inert before a read-only subcommand
-		//   --at-operation            read-only in effect, but selects a whole
-		//                             alternate repo view
-		//   --ignore-working-copy, --debug, --color, --quiet, -V/--version
+		// --config/--config-file are excluded as an exec path: ui.pager is spawned by
+		// the read-only subcommands below, so `jj --config 'ui.pager=[…]' log` runs an
+		// arbitrary program (verified, jj 0.41). The remaining globals
+		// (--ignore-immutable, --at-operation, --ignore-working-copy, --debug,
+		// --color, --quiet, -V) are out for zero logged demand only, not danger —
+		// --ignore-immutable in particular is inert before a read-only subcommand.
+		// See DESIGN-jj-global-flags.md.
 		Flags: []flagSpec{
 			{Short: "R", Long: "repository", TakesArg: true},
 			{Long: "no-pager"},
@@ -2071,23 +2048,12 @@ func jjGitSpec() *commandSpec {
 // subcommands (`jj log -R <path>`), as opposed to jjSpec()'s pre-subcommand
 // globals.
 //
-// Two flags were REMOVED here on 2026-07-27 and must not come back:
-//
-//	--tool NAME   Names a merge-tool, i.e. an executable, and jj runs it.
-//	              `jj diff --tool /tmp/evil` classified allow and executed the
-//	              script (verified, jj 0.41: it ran, exit 0, no output). It was
-//	              reachable from diff/log/show and the op subcommands — every
-//	              read-only jj command this whitelist accelerates. There is no
-//	              read-only use for handing jj an external program.
-//	--config-toml Same class as jjSpec()'s excluded --config: injects config,
-//	              and ui.pager is spawned by these very subcommands. Inert only
-//	              by accident — jj 0.41 removed the flag name, so the command
-//	              errors before executing. That is a version accident, not a
-//	              safety property; the replacement (--config) is deliberately
-//	              absent here and from jjSpec().
-//
-// The general rule both violate: a flag whose value is a program name, or that
-// can set one, is an exec path regardless of how read-only the subcommand is.
+// Two flags were removed here on 2026-07-27 and must not come back: --tool
+// (names a merge-tool, i.e. an executable, and jj runs it — `jj diff --tool
+// /tmp/evil` classified allow and executed it) and --config-toml (same
+// config-injection class as jjSpec()'s excluded --config; inert only because jj
+// 0.41 dropped the flag name, which is a version accident, not a safety
+// property). See DESIGN.md "Flag values that are programs".
 func jjCommonFlags() []flagSpec {
 	return []flagSpec{
 		{Short: "r", Long: "revision", TakesArg: true},
@@ -2198,34 +2164,16 @@ func devenvShellSpec() *commandSpec {
 }
 
 // nixGenericSpec backs `nix eval` and friends. It accepts INSTALLABLES
-// (`nix eval .#pkg`, `nix eval nixpkgs#hello.version`) but deliberately NOT
-// caller-authored Nix source.
+// (`nix eval .#pkg`) but deliberately not caller-authored Nix source:
+// --expr/--file/--apply were removed 2026-07-27 because Nix evaluation is not a
+// read-only sandbox (`--impure --expr 'builtins.readFile /etc/hostname'` returns
+// the file; builtins.fetchurl makes real outbound requests, and needs no
+// --impure).
 //
-// Removed 2026-07-27 — Nix evaluation is not a read-only sandbox:
-//
-//	--expr EXPR   arbitrary Nix. Verified: `--impure --expr
-//	              'builtins.readFile /etc/hostname'` returned the file, and
-//	              `builtins.fetchurl` made real outbound requests — i.e. read a
-//	              secret, exfiltrate it via URL. fetchurl does not even need
-//	              --impure.
-//	--file PATH   same hole via a file: `nix eval --impure --file /tmp/x.nix`
-//	              evaluates whatever that file contains (verified).
-//	--apply EXPR  arbitrary Nix applied to the result; same evaluator.
-//
-// --impure stays: on its own it only relaxes purity for an installable the
-// caller already named literally, with no evaluator input to inject once the
-// three flags above are gone.
-//
-// --arg/--argstr stay, but only because --file went with them: --arg's value IS
-// a Nix expression, so it would be an injection point if it had an evaluator to
-// reach. It does not. Verified against nix 2.x: with a flake installable it is
-// refused outright ("'--arg' and '--argstr' are incompatible with flakes"), and
-// the non-flake form it needs is exactly `-f/--file`. If --file is ever
-// restored, --arg/--argstr must be reconsidered in the same change.
-//
-// Same rule as jjCommonFlags(): a flag whose value is a program — or a program
-// text the tool will evaluate — is an exec path however read-only the
-// subcommand looks.
+// --arg/--argstr survive only because --file went with them: their values ARE
+// Nix expressions, but flakes refuse them and the non-flake form they need is
+// -f/--file. If --file is ever restored, reconsider them in the same change.
+// See DESIGN.md "Flag values that are programs".
 func nixGenericSpec() *commandSpec {
 	return &commandSpec{
 		Style: styleGNU,
