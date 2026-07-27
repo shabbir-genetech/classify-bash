@@ -31,6 +31,7 @@ type event struct {
 	AgentID        json.RawMessage `json:"agent_id"`
 	AgentType      json.RawMessage `json:"agent_type"`
 	Effort         json.RawMessage `json:"effort"`
+	PromptID       json.RawMessage `json:"prompt_id"`
 }
 
 // toolInput is the Bash tool's input shape. command is the only field we
@@ -43,6 +44,13 @@ type toolInput struct {
 	Timeout         json.RawMessage `json:"timeout"`
 	RunInBackground json.RawMessage `json:"run_in_background"`
 	Effort          json.RawMessage `json:"effort"`
+
+	// DangerouslyDisableSandbox: the harness attaches this when a Bash call
+	// opts out of the sandbox. Enumerated (not read) so the strict decoder
+	// doesn't block sandbox-disabled calls. The decision to run outside the
+	// sandbox is the permission flow's concern, not ours — we still only ever
+	// ADD an allow, never gate.
+	DangerouslyDisableSandbox json.RawMessage `json:"dangerouslyDisableSandbox"`
 }
 
 // decodeEvent reads exactly one JSON event from r and validates it against

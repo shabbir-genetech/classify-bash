@@ -777,6 +777,14 @@ func TestEventDecodeAccepts(t *testing.T) {
 		// these in the schema the strict decoder exits 2 on every sub-agent
 		// tool call.
 		`{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"ls"},"agent_id":"ad50092edde64eaef","agent_type":"Explore"}`,
+		// Newer Claude Code attaches a top-level prompt_id correlating the call
+		// to the originating prompt. Without it enumerated on `event`, the strict
+		// decoder exits 2 and blocks EVERY Bash call.
+		`{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"ls"},"prompt_id":"p_abc123"}`,
+		// Sandbox-disabled Bash calls carry a dangerouslyDisableSandbox flag
+		// inside tool_input. Without it enumerated, the strict decoder exits 2
+		// and blocks every sandbox-disabled call.
+		`{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"ls","dangerouslyDisableSandbox":true}}`,
 	}
 	for _, body := range cases {
 		ev, err := decodeEvent(strings.NewReader(body))
