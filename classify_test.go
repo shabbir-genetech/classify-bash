@@ -156,6 +156,8 @@ func TestMustAllow(t *testing.T) {
 		"jj status",
 		"jj st",
 		"jj diff",
+		"jj diff --from @- --to @",
+		"jj diff -f '::@' -t '@' --stat",
 		"jj log",
 		"jj log -r @",
 		"jj show",
@@ -516,6 +518,7 @@ func TestMustNotAllow(t *testing.T) {
 		"jj -R /tmp config set x y",
 		"jj -R /tmp op undo",
 		`jj -R "$(echo /tmp)" st`, // substituted flag value
+		`jj diff --from "$(echo @-)" --to @`, // substituted revset value
 		"jj -R /tmp",              // flag but no subcommand
 		"jj -R",
 		// Deliberate exclusions from the global flag set. --config sets

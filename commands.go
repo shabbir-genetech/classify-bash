@@ -2057,6 +2057,11 @@ func jjGitSpec() *commandSpec {
 func jjCommonFlags() []flagSpec {
 	return []flagSpec{
 		{Short: "r", Long: "revision", TakesArg: true},
+		// --from/--to take Jujutsu revsets: repository-history queries, not
+		// programs or evaluated expressions. Substituted shell values are still
+		// rejected by the generic literal-only flag-argument rule.
+		{Short: "f", Long: "from", TakesArg: true},
+		{Short: "t", Long: "to", TakesArg: true},
 		{Short: "p", Long: "patch"},
 		{Short: "s", Long: "summary"},
 		{Long: "stat"},
