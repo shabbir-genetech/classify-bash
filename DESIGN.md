@@ -130,10 +130,23 @@ wrong event or tool — **falls through**: exit 0, empty stdout, one `undecodabl
 log record. The host then applies its normal permission flow, exactly as it would
 if this hook were not installed.
 
-**Unknown fields are tolerated, and reported.** A field the harness starts sending
-that this binary does not know decodes normally and is recorded as a
-`schema_drift` record naming it. Classification is unaffected. To silence the
-record, add the field as an ignored `json.RawMessage` in the right struct (a
+**An unknown field withholds the allow, and is reported.** A field the harness
+starts sending that this binary does not know decodes normally, is recorded as a
+`schema_drift` record naming it, and **suppresses the auto-approval for that
+call** — the hook exits 0 with empty stdout, so the host prompts exactly as it
+would for any unclassifiable command. It is never rejected with a nonzero exit.
+
+Two separate properties, deliberately: we will not hand out an `allow` while
+blind to part of the payload (an unknown field could in principle be one that
+changes what the command *does*), and a harness addition must never be able to
+block the Bash tool — which is precisely what the old strict decoder did, five
+times. Withholding an acceleration is a cost measured in permission prompts;
+blocking is measured in dead sessions.
+
+Note the asymmetry this preserves: the hook can only ever *add* an allow, so
+degrading to "no opinion" is always safe. To silence the
+record — and restore acceleration for payloads carrying the field — add it as an
+ignored `json.RawMessage` in the right struct (a
 top-level field goes on `event`, a `tool_input` field goes on `toolInput` in
 `event.go`) and add an accept-test covering an event that carries it. No `go.mod`
 change, so the vendor hash is unaffected. The known-field sets are derived from
@@ -172,7 +185,7 @@ Logging is **opt-in** and writes one JSON line per record (`log.go`). There are
 |---|---|---|
 | `fallthrough` | No whitelist match | no `allow`; host prompts |
 | `failloud` | Bad `--log-*` flag, or unknown `mvdan/sh` AST node | exit 2, **blocks** |
-| `schema_drift` | Unknown harness field(s); `reason` names them | `allow`/fall-through as normal |
+| `schema_drift` | Unknown harness field(s); `reason` names them | allow withheld → host prompts (exit 0) |
 | `undecodable` | Unusable event (malformed JSON, wrong tool, empty command) | fail open, exit 0 |
 
 It exists so you can see what is failing to accelerate and notice classifier

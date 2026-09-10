@@ -13,10 +13,13 @@ import (
 // event captures every top-level field we have seen in a Claude Code PreToolUse
 // payload. We only act on HookEventName, ToolName, and ToolInput.Command.
 //
-// The other fields are enumerated purely as DOCUMENTATION and as the source of
-// truth for schema-drift detection (see unknownFields). They are NOT a
-// validation gate: an unrecognized field is reported and ignored, never
-// rejected.
+// The other fields are enumerated as DOCUMENTATION and as the source of truth
+// for schema-drift detection (see unknownFields). They are NOT a validation
+// gate in the blocking sense: an unrecognized field is reported and the allow is
+// withheld — the call falls through to the host's normal prompt — but it is
+// never rejected with a nonzero exit. Enumerating a field here therefore does
+// two things: it silences the field's schema_drift record, and it restores
+// auto-allow for payloads carrying it.
 //
 // This is a deliberate reversal of the original design, which set
 // DisallowUnknownFields so that a new harness field would "fail loud". That

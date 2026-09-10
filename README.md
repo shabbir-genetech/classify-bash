@@ -19,11 +19,15 @@ strict whitelist of read-only forms.
 - **Defensive contract, but never at the cost of blocking.** The event must
   declare `hook_event_name == "PreToolUse"` and `tool_name == "Bash"` and carry a
   non-empty command; anything else **falls through** (exit 0, empty stdout) and is
-  recorded as an `undecodable` log line. **Unknown fields are tolerated** — a
-  field the harness adds after this binary was built is recorded as
-  `schema_drift` and ignored, never rejected. An unrecognized `mvdan/sh` AST node
-  kind is the one remaining loud failure (exit 2): there we would rather block
-  than silently ship a stale classifier.
+  recorded as an `undecodable` log line. **An unknown field withholds the allow
+  but never blocks** — a field the harness adds after this binary was built is
+  recorded as `schema_drift`, and the call falls through to the host's normal
+  prompt (exit 0, empty stdout) rather than being auto-approved. The rule: we do
+  not hand out an auto-approval while blind to part of the payload, and we do not
+  take the Bash tool down over a harness addition either. Enumerate the field on
+  `event`/`toolInput` to silence the record and restore acceleration. An
+  unrecognized `mvdan/sh` AST node kind is the one remaining loud failure
+  (exit 2): there we would rather block than silently ship a stale classifier.
 
 ## Failure modes
 
@@ -32,7 +36,7 @@ strict whitelist of read-only forms.
 | Command matches the whitelist                       | 0    | allow JSON  | empty                           |
 | Command is unsafe, unknown, or has an unknown flag  | 0    | empty       | empty                           |
 | Bash parser refuses the input                       | 0    | empty       | empty                           |
-| Unknown field in the event                          | 0    | as normal   | empty (logged as `schema_drift`)|
+| Unknown field in the event                          | 0    | empty       | empty (logged as `schema_drift`)|
 | Undecodable / wrong event / empty command           | 0    | empty       | empty (logged as `undecodable`) |
 | Bad `--log-*` flag                                  | 2    | empty       | `classify-bash: bad flag: ...`  |
 | Unknown `mvdan/sh` AST node kind                    | 2    | empty       | `classify-bash: unknown ...`    |

@@ -8,8 +8,13 @@
 //     to Claude Code's normal permission prompt).
 //   - Undecodable or unusable event (malformed JSON, wrong event/tool, missing
 //     command): fail OPEN — log an "undecodable" record and exit 0 with no
-//     stdout. An unrecognized FIELD is not a violation at all: it is recorded as
-//     a "schema_drift" record and otherwise ignored.
+//     stdout.
+//   - Unrecognized FIELD in the payload: recorded as a "schema_drift" record,
+//     and the allow is WITHHELD — exit 0 with no stdout, so the host prompts.
+//     Never a block. The rule is that we do not auto-approve while blind to part
+//     of the payload, but a harness addition must not be able to take the Bash
+//     tool down (it did, five times, under the old strict decoder). Enumerate
+//     the field in event/toolInput to restore acceleration.
 //   - Bad --log-* flag: exit 2. This is an operator error at the registration
 //     site, not harness drift, so it stays loud.
 //   - Unknown AST node kind from mvdan/sh that the classifier does not handle:
@@ -45,11 +50,29 @@ func main() {
 	}
 	currentCommand = ev.ToolInput.Command
 
-	if classifyCommand(ev.ToolInput.Command) == decisionAllow {
+	if shouldAllow(ev.ToolInput.Command, drift) {
 		emitAllow()
 	}
 	// Fall-through: best-effort log, then silent exit 0.
 	logNonAllow(logCfg, "fallthrough", ev.ToolInput.Command, "")
+}
+
+// shouldAllow reports whether to emit an allow for this event.
+//
+// An unrecognized field withholds the allow but never blocks: we will not hand
+// out an auto-approval while blind to part of the payload, and we will not take
+// the Bash tool down over it either — the caller exits 0 with no stdout, so the
+// host prompts exactly as it would for any unclassifiable command. Enumerating
+// the field in event/toolInput (which is also what silences its schema_drift
+// record) restores acceleration.
+//
+// Split out of main so the drift interaction is testable; main itself is not
+// covered by the suite.
+func shouldAllow(command string, drift []string) bool {
+	if len(drift) > 0 {
+		return false
+	}
+	return classifyCommand(command) == decisionAllow
 }
 
 // logCfg and currentCommand are process-global because failLoud — reachable from

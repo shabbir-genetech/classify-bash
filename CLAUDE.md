@@ -21,9 +21,12 @@ One event flows through a fixed pipeline; reading these in order is the fastest
 way to understand the whole thing:
 
 - **`main.go`** — entry point. Resolve logging flags (`parseLogFlags`), decode the
-  event, classify the command, and on `decisionAllow` print the fixed allow JSON
-  (hand-written, no `encoding/json` on the emit path). Everything else is silent
-  exit 0. An unusable event goes through `failOpen` — logged as `undecodable`,
+  event, classify the command, and print the fixed allow JSON (hand-written, no
+  `encoding/json` on the emit path) when **`shouldAllow`** says so — that is
+  `decisionAllow` *and* no schema drift, so an unknown payload field withholds
+  the allow without blocking. `shouldAllow` is split out of `main` precisely
+  because `main` has no test coverage; put decision logic there, not inline.
+  Everything else is silent exit 0. An unusable event goes through `failOpen` — logged as `undecodable`,
   exit 0 — so a decode problem can never block a tool call. `failLoud` (exit 2)
   survives only for a bad `--log-*` flag and an unknown AST node, and best-effort
   logs a `failloud` record via the package-level `logCfg`/`currentCommand`.
@@ -43,8 +46,10 @@ way to understand the whole thing:
   `event`/`toolInput`, plus `unknownFields` for drift reporting. Only `command` is
   read; every other field is enumerated as an ignored `json.RawMessage`, and the
   known-field sets are derived from those struct tags by reflection — so the
-  struct is the single source of truth. Name-drift is reported as `schema_drift`
-  and ignored; type-drift on ignored fields stays quiet. **Never reintroduce
+  struct is the single source of truth — enumerating a field silences its record
+  AND re-enables auto-allow for payloads carrying it. Name-drift is reported as
+  `schema_drift` and withholds the allow (never blocks); type-drift on ignored
+  fields stays quiet, since they are `json.RawMessage`. **Never reintroduce
   `DisallowUnknownFields`**: `PreToolUse` exit 2 blocks the tool, so rejecting a
   harmless new harness field takes the whole Bash tool down (it did, repeatedly —
   see DESIGN.md "Defensive JSON contract").
@@ -195,11 +200,14 @@ expected, and reconciling it is a fork-side rebase, not a problem here.
   parsing, rest is opaque data, so `cat file -X` allows `-X` as data), which is only
   sound when it has no flag-reachable side effect at all. So never set `ArgvDataSafe`
   on a spec with such a path. See README "Extending the whitelist" and `matchGNU`.
-- **Tolerant JSON decoder** (`event.go`). When the harness starts sending a new
-  field on the event or inside `tool_input`, classification proceeds and a
-  `schema_drift` record names it. Enumerate it as an ignored `json.RawMessage` on
-  the right struct (`event` for top-level, `toolInput` for a `tool_input` field) +
-  an accept-test to silence it. Do NOT make this strict again — see DESIGN.md.
+- **Non-blocking JSON decoder** (`event.go`). When the harness starts sending a
+  new field on the event or inside `tool_input`, the event decodes, a
+  `schema_drift` record names it, and **the allow is withheld for that call** —
+  exit 0, host prompts. Enumerate it as an ignored `json.RawMessage` on the right
+  struct (`event` for top-level, `toolInput` for a `tool_input` field) + an
+  accept-test; that both silences the record and restores acceleration. **Do NOT
+  make this reject (nonzero exit) again** — withholding an allow costs prompts,
+  rejecting costs dead sessions. See DESIGN.md.
 - **Fail loud on the unknown, but only where nothing upstream can trigger it**: an
   unrecognized `mvdan/sh` AST node, redirect op, or flag style calls `failLoud`
   (exit 2) rather than guessing — we'd rather block than ship a stale classifier.
