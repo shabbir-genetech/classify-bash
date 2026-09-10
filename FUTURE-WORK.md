@@ -124,6 +124,16 @@ fall-throughs would allow under the current build, so the corpus is live, not st
   deliberate probe. Both real fields are now enumerated (`59e564fd`). No unknown
   AST node, redirect op, or flag style has ever fired. This is the 4th instance of
   the harness-field trap; expect a 5th.
+  - **The 5th arrived and ended the mechanism (2026-09-10, `scratchpad_dir`).**
+    Claude Code 2.1.267 attaches it to *every* `PreToolUse` event, so it was a
+    whole-session Bash outage rather than the intermittent shape of `effort`.
+    That instance is why `DisallowUnknownFields` was removed instead of gaining a
+    fifth enumerated field — see DESIGN.md, "Defensive JSON contract".
+    **Consequence for this corpus: `failloud` is no longer the health signal to
+    read.** Unknown fields now surface as `schema_drift` records naming the field,
+    so a future triage pass should count those; a nonzero `failloud` count now
+    means a bad `--log-*` flag or an unknown AST node, both of which are
+    operator- or dependency-driven rather than harness-driven.
 - **`jj` global flags before a subcommand — the one substantial new gap (~66).**
   **IMPLEMENTED 2026-07-27** (`rnrrlwul`); see DESIGN-jj-global-flags.md. A
   dedicated re-count over the same corpus put the read-only win at 147 records,

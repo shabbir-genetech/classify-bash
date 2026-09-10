@@ -130,8 +130,37 @@ The working copy is managed by **jujutsu (`jj`)** — there is a `.jj/` director
   attribution in the message; see Conventions.)
 
 (DESIGN.md's "Build gotcha" calls out the jj-vs-git split explicitly; the
-published upstream is consumed as a `git+ssh` flake input, but local dev here is
-jj.)
+published upstream is consumed as a `github:` flake input — it moved off
+`git+ssh://` on 2026-06-09 once the repo went public, a zero-rebuild change
+because a git input strips `.git` and so hashes identically to the tarball at the
+same rev — but local dev here is jj.)
+
+### A second remote exists: `github.com/SBhojani/classify-bash`
+
+Same owner, and it can be **ahead** of this repo. It is where the fail-open change
+(`b6555e41`, the parent of the commit that removed `DisallowUnknownFields`) was
+authored, and as of 2026-09-10 it carries six further commits that are **not**
+here: a `cmd/` + `internal/` package split so the engine cannot see the host,
+`doctor`/`check` subcommands, packaged pi and oh-my-pi shims, and a change making
+the engine abort the classification walk instead of calling `os.Exit`.
+
+**Consumers pin THIS repo**, so a fix authored there has to be brought across.
+Check whether it has anything first, then cherry-pick:
+
+```bash
+gh api repos/shabbir-genetech/classify-bash/forks --jq '.[].full_name'
+gh api repos/shabbir-genetech/classify-bash/compare/<our-rev>...SBhojani:master \
+  --jq '{status,ahead_by,behind_by}'
+git remote add fork git@github.com:SBhojani/classify-bash.git && git fetch fork
+git rev-parse <sha>^     # confirm the commit sits on OUR tip → no refactor entanglement
+git cherry-pick <sha>
+```
+
+Checking `<sha>^` is what makes this cheap — `b6555e41` cherry-picked without
+conflict precisely because it predated the refactor in fork history. **A
+cherry-pick leaves the two histories permanently diverged** (the same change now
+exists under two SHAs, so `compare` reports `diverged`, not `behind`); that is
+expected, and reconciling it is a fork-side rebase, not a problem here.
 
 ## Conventions
 

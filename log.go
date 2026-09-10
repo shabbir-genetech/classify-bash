@@ -95,9 +95,13 @@ func defaultLogFile() string {
 	return filepath.Join(base, "classify-bash", "log")
 }
 
-// logNonAllow records one non-allowed event. kind is "fallthrough" or "failloud";
-// reason is the failLoud message (empty for fall-throughs). Every error is
-// intentionally swallowed; the caller proceeds regardless.
+// logNonAllow records one event that was not auto-allowed. kind is "fallthrough",
+// "failloud", "schema_drift" or "undecodable"; reason carries the failLoud or
+// decode message, the comma-joined drifted field names, and is empty for
+// fall-throughs. Despite the name, "schema_drift" does not imply a blocked or
+// unallowed call — classification proceeds normally and the record is
+// informational. Every error is intentionally swallowed; the caller proceeds
+// regardless.
 func logNonAllow(cfg *logConfig, kind, command, reason string) {
 	if cfg == nil || !cfg.enabled {
 		return

@@ -165,9 +165,20 @@ configurable is tracked in `FUTURE-WORK.md`.
 
 ## Logging non-allowed commands
 
-Logging is **opt-in** and records only the *non-allowed* cases — fall-through and
-`failLoud` — as one JSON line each (`log.go`). It exists so you can see what is
-failing to accelerate and notice classifier staleness. Several design choices are
+Logging is **opt-in** and writes one JSON line per record (`log.go`). There are
+**four** `kind`s, and only the first two mean the command was not allowed:
+
+| `kind` | Meaning | Decision |
+|---|---|---|
+| `fallthrough` | No whitelist match | no `allow`; host prompts |
+| `failloud` | Bad `--log-*` flag, or unknown `mvdan/sh` AST node | exit 2, **blocks** |
+| `schema_drift` | Unknown harness field(s); `reason` names them | `allow`/fall-through as normal |
+| `undecodable` | Unusable event (malformed JSON, wrong tool, empty command) | fail open, exit 0 |
+
+It exists so you can see what is failing to accelerate and notice classifier
+staleness. Note `schema_drift` is **not** a non-allowed case — classification
+proceeds unaffected; the record exists purely so a new harness field is visible
+without costing anyone a blocked call. An allowed command is never logged. Several design choices are
 non-obvious enough to record here.
 
 **Off by default.** The documented contract is silence on fall-through, and a log
