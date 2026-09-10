@@ -19,10 +19,46 @@ a spec).
 ### CANDIDATE — make the unknown-AST-node failure configurable
 
 `classifyCommand` calls `failLoud` (exit 2) on an `mvdan/sh` AST node kind it does
-not handle. Since `PreToolUse` exit 2 *blocks* the tool, this is now the only
-remaining path by which this binary can take the Bash tool down — the JSON decoder
-stopped being one when unknown fields became tolerated (see DESIGN.md, "Defensive
-JSON contract").
+not handle. Since `PreToolUse` exit 2 *blocks* the tool, this is the main remaining
+path by which this binary can take the Bash tool down. The JSON decoder stopped
+being one when unknown fields stopped being rejected — note they are not merely
+*tolerated* either: since `fb5978c` an unknown field **withholds the allow** without
+blocking (see DESIGN.md, "Defensive JSON contract").
+
+**Full inventory of `failLoud` call sites (7, audited 2026-09-10)** — worth stating
+because "the only remaining path" was previously written as one item and is really
+three kinds, only the first of which is upstream-triggerable:
+
+| Kind | Sites | Upstream can trigger? |
+|---|---|---|
+| Unhandled parser construct | `classify.go:96` (command kind), `classify.go:156` (redirect op), `spec.go:183` (flag style), `awk.go:114`/`awk.go:183` (awk stmt/expr kind) | **Yes** — an `mvdan.cc/sh` bump, or an awk program using a construct the fork's parser does not model |
+| Operator error at the registration site | `main.go:38` (bad `--log-*` flag) | No — stays loud deliberately |
+| I/O failure while emitting | `main.go:119` (`write stdout`) | No — but see below |
+
+Two things the old one-line framing hid. **The awk sites are a second dependency
+surface**: an unusual-but-valid awk program can reach them without any dependency
+bump, so this is not purely a "we control when it moves" exposure. And
+**`write stdout` failing calls `failLoud`, which turns a write error into a
+*blocking* exit 2** — the one case where the failure has nothing to do with
+classification and blocking is clearly wrong; it should fall through, since a host
+that cannot read our stdout will apply its normal permission flow anyway.
+Reproduced 2026-09-10 against the deployed binary:
+
+```console
+$ echo '{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"ls"}}' \
+    | classify-bash > /dev/full
+classify-bash: write stdout: write /dev/stdout: no space left on device
+$ echo $?
+2
+```
+
+So a full disk — or any host that closes the pipe early — blocks every *allowable*
+command, while unallowable ones are unaffected (they never write). That is the
+inverse of the intended failure direction. **Smallest correct fix: `failOpen` there
+instead of `failLoud`** — the allow was not delivered, so no-opinion is exactly
+right, and the existing `undecodable` record already carries the reason. Worth doing
+independently of the AST-node flag question above; it is a two-line change with no
+interface implications.
 
 The exposure is the same shape as the harness-field problem, from a different
 direction: a `mvdan.cc/sh` upgrade that introduces a node kind would block every
@@ -34,6 +70,23 @@ behavior, correct while developing the classifier) with `fallthrough` recommende
 for deployed hook registrations. Open question: whether a single flag should govern
 both this and future strictness choices, or whether each unknown-kind site deserves
 its own switch.
+
+**`fb5978c` supplies a precedent that may make the flag unnecessary.** The unknown-field
+problem was solved without a switch, by separating two things this proposal still
+conflates: *withholding the allow* (safe — the hook can only ever add an allow, so
+declining to is always available) from *blocking the call* (unsafe — exit 2 stops the
+tool). An unknown AST node could take the same route: fall through **and** log a
+record naming the node kind, giving the staleness signal that `fail` was there to
+provide, with no flag, no configuration, and no way to leave a deployed registration
+in the blocking mode by accident.
+
+The argument for keeping `fail` was "we'd rather block than ship a stale classifier."
+That is the same argument the strict JSON decoder rested on, and the same
+counter applies: **a blocking gate cannot warn you — it just stops you.** The
+distinction worth preserving is that an unhandled AST node means the classifier
+genuinely cannot reason about the command, so falling through is not merely safe but
+*correct*: no opinion is the honest answer. Worth re-deciding on that basis before
+building a flag, since a flag is a permanent interface and the log record is not.
 
 ### Two kinds of "must not allow" (test taxonomy)
 
