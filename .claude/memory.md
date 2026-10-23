@@ -72,6 +72,12 @@ README.md — this file is for how we work, not what the code is.)
   tables only (`-run 'TestMustNotAllow|TestScratch…'`): a check killed only by
   `TestNotYetAllowed` is unguarded. The 2026-10-23 pass found two survivors and
   three wall gaps this way. See DESIGN.md "AST handling".
+- **A test case lifted from the log carries the log's identifiers.** Corpus
+  commands contain real home paths, project codenames and scratchpad paths, and
+  this repo is public (CLAUDE.md "Privacy invariant"). A wall case copied from a
+  record once brought a project-specific variable name into `classify_test.go`.
+  Rename to a generic shape before committing, and grep the diff for home paths
+  and codenames before every push, tests included.
 - **Read every `*syntax.Word` field of a node you accept.** The heredoc hole
   (fixed `0751c71`) was a checked `Redirect.Word` beside an unchecked
   `Redirect.Hdoc`; it was found by reading the code, and no log could have shown
