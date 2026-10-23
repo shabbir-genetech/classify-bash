@@ -208,8 +208,14 @@ re-register: the fork honours the bare flags-only invocation on a piped stdin as
 the legacy hook (`looksLikeLegacyHook`), at the cost of a `deprecated_invocation`
 log record on every call and log-and-allow drift handling (no withhold). The parts worth porting on
 their own are `check` (classify a command without a hook payload — the integration
-contract for other hosts) and `--on-unknown-ast=fallthrough` (removes the last
-blocking path, FUTURE-WORK's open `failLoud` item). Going the other way, `0751c71`
+contract for other hosts), `--on-unknown-ast=fallthrough` (removes the last
+blocking path, FUTURE-WORK's open `failLoud` item), the never-exit engine that
+makes it possible (`failLoud` panics, `Classify` recovers it into an `Unparseable`
+result, and only the CLI decides whether that blocks — `internal/engine/api.go`),
+and possibly `doctor` (a windowed health report over the log that states old
+records as history). The fork's README and `cmd/classify-bash/` are the
+description of all four; read the code, not the commit titles — a summary
+from titles alone got the registration question above wrong. Going the other way, `0751c71`
 is the change the fork most needs: it touches only `classify.go`, which the refactor
 moved but barely changed.
 
