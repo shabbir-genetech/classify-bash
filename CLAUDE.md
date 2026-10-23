@@ -165,22 +165,35 @@ here: a `cmd/` + `internal/` package split so the engine cannot see the host,
 the engine abort the classification walk instead of calling `os.Exit`.
 
 **Consumers pin THIS repo**, so a fix authored there has to be brought across.
-Check whether it has anything first, then cherry-pick:
+This is a jj repo, so the recipe is jj, not git. The remote is named `fork`, and
+`master@fork` is left **untracked** so local `master` never follows it:
 
 ```bash
-gh api repos/shabbir-genetech/classify-bash/forks --jq '.[].full_name'
-gh api repos/shabbir-genetech/classify-bash/compare/<our-rev>...SBhojani:master \
-  --jq '{status,ahead_by,behind_by}'
-git remote add fork git@github.com:SBhojani/classify-bash.git && git fetch fork
-git rev-parse <sha>^     # confirm the commit sits on OUR tip → no refactor entanglement
-git cherry-pick <sha>
+jj git remote add fork git@github.com:SBhojani/classify-bash.git   # once per clone
+jj git fetch --remote fork
+jj log -r 'master..master@fork'      # what the fork has that we do not
+jj log -r 'master@fork..master'      # what we have that the fork does not
+jj log -r '<sha>-'                   # its parent: on our history → no refactor entanglement
+jj duplicate <sha> --onto master     # jj's cherry-pick (jj ≥ 0.44 spelling; alias -d)
 ```
 
-Checking `<sha>^` is what makes this cheap — `b6555e41` cherry-picked without
+Checking the parent is what makes this cheap — `b6555e41` cherry-picked without
 conflict precisely because it predated the refactor in fork history. **A
 cherry-pick leaves the two histories permanently diverged** (the same change now
 exists under two SHAs, so `compare` reports `diverged`, not `behind`); that is
 expected, and reconciling it is a fork-side rebase, not a problem here.
+
+**The flow runs both ways, and the fork is behind on safety.** On 2026-10-23 the
+fork (last push 2026-09-07) lacked `fb5978c` (withhold the allow on schema drift —
+its `claude-lenient`/`claude-strict` modes are classify-anyway and block, with no
+withhold), `0751c71` (unquoted heredoc bodies — as published it auto-approves
+`cat <<EOF` around `$(cmd)`), and §6/§10. Re-count with the two `jj log` lines
+above rather than trusting a number here. Bringing its refactor across is not a
+cherry-pick: every file moved, and its "engine cannot see the host" rule meets §10's
+filesystem checks and §6's environment check head on. The parts worth porting on
+their own are `check` (classify a command without a hook payload — the integration
+contract for other hosts) and `--on-unknown-ast=fallthrough` (removes the last
+blocking path, FUTURE-WORK's open `failLoud` item).
 
 ## Conventions
 
