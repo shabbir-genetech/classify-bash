@@ -50,7 +50,7 @@ func main() {
 	}
 	currentCommand = ev.ToolInput.Command
 
-	if shouldAllow(ev.ToolInput.Command, drift) {
+	if shouldAllow(ev.ToolInput.Command, drift, validScratchDir(ev.ScratchpadDir, ev.CWD)) {
 		emitAllow()
 	}
 	// Fall-through: best-effort log, then silent exit 0.
@@ -66,13 +66,16 @@ func main() {
 // the field in event/toolInput (which is also what silences its schema_drift
 // record) restores acceleration.
 //
+// scratch is the event's scratchpad directory after validScratchDir, or "" —
+// the only thing that lets a write redirect allow (FUTURE-WORK §10).
+//
 // Split out of main so the drift interaction is testable; main itself is not
 // covered by the suite.
-func shouldAllow(command string, drift []string) bool {
+func shouldAllow(command string, drift []string, scratch string) bool {
 	if len(drift) > 0 {
 		return false
 	}
-	return classifyCommand(command) == decisionAllow
+	return classifyCommandIn(command, scratch) == decisionAllow
 }
 
 // logCfg and currentCommand are process-global because failLoud — reachable from

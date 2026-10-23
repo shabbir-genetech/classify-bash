@@ -286,8 +286,8 @@ than scrolling the lot; a triage healthy-check is mostly counting `kind` (any
 `failloud`?) and bucketing the fall-throughs by leading command. One caveat the
 records make obvious: **triaging the log pollutes the log.** The analysis commands are
 themselves Bash tool calls — `journalctl … -o cat`, a `python3 - <<'EOF'` heredoc, an
-`ls`/`echo` probe — and they fall through (heredocs and most multi-statement lists are
-never whitelistable), so each pass appends a tail of near-duplicate self-referential
+`ls`/`echo` probe — and they fall through (an interpreter is never whitelisted, and
+most multi-statement analysis lists contain one), so each pass appends a tail of near-duplicate self-referential
 records. Expect them, and read the *substantive* fall-throughs as the ones that predate
 your current session.
 
@@ -300,8 +300,10 @@ both — `cd <literal>`, `command -v`, `git` read subcommands, extended `grep` f
 "already covered" trap above, one level up: the blocker is almost never the command
 your eye lands on. The findings and the resulting re-prioritization (un-whitelisted
 `gh`/`journalctl` readers; literal-`$VAR` and literal-`for` as the real structural
-levers; Tier-2 `--` and a `sed` parser confirmed ≈0 demand) live in
-[FUTURE-WORK.md](FUTURE-WORK.md) "Observed demand".
+levers; Tier-2 `--` and a `sed` parser at ≈0 demand *in that corpus*) live in
+[FUTURE-WORK.md](FUTURE-WORK.md) "Observed demand". The `sed` half did not last: the
+2026-10-23 pass found `sed` the primary blocker on 369 of 13,118 records (see that
+section's fourth pass). A demand finding is a property of one corpus, not of the tool.
 
 **That note was not enough: use `TestTriage`.** The 2026-07-27 pass re-derived the
 bogus `cd`-prefix finding *despite* the paragraph above naming `cd` explicitly — a
@@ -340,7 +342,11 @@ Two corpus-scale moves from the second pass (2026-06-10), both replay-based:
   hook after commit + push + downstream re-lock). One caveat the second pass made
   vivid: a feature can be live yet show ~no benefit because the dominant usage
   pattern is blocked by an *unrelated* rule — e.g. `journalctl … > file` falls
-  through on the write-redirect rule no matter what the whitelist says.
+  through on the write-redirect rule no matter what the whitelist says (since
+  2026-10-23, unless `file` is a data file in the session scratchpad — "Scratchpad
+  writes" below). The same pass measured the inverse: literal `$VAR` alone flipped
+  3.8% of records and only 16.1% together with scratchpad writes, because the two
+  blockers stack in one idiom. Replay the *combination* before judging a lever.
 
 ## AST handling (`classifyCmd`)
 
@@ -348,12 +354,36 @@ The shell command is parsed with `mvdan.cc/sh/v3/syntax`. Compound forms are
 handled conservatively:
 
 - `BinaryCmd` (`&&`, `||`, pipe) and `Subshell` (`( … )`) **recurse** — every
-  inner statement must itself classify as safe.
+  inner statement must itself classify as safe. They also decide which variable
+  bindings each side sees ("Literal-bound variables" below); an unknown binary
+  operator fails loud.
+- An **assignment-only** statement is accepted as a binding, never on its own: a
+  command made only of assignments falls through.
 - `Block` and every other compound kind (`If`/`For`/`While`/`Case`/`FuncDecl`/
   `Let`/`Time`/`Coproc`/`Test`/`Decl`/`Arithm`) are **rejected**.
 - An unrecognized AST node kind → fail loud, exit 2. A new `mvdan/sh` release
   that introduces a node we do not handle should stop the classifier, not be
   silently treated as safe.
+
+**Redirects are words too — check every word bash will expand.** A heredoc's body
+is expanded when its delimiter is unquoted, so `cat <<EOF` around `$(cmd)` runs
+`cmd`. From the first commit until `0751c71` (2026-10-23) `safeRedirect` checked
+only the delimiter, and that form classified Allow — arbitrary execution behind an
+auto-approval, found by reading the code, not by any test or log record (the log
+never records an allow). A body now passes only if every part is a `Lit`, which is
+exactly how `mvdan/sh` stores a quoted-delimiter (`<<'EOF'`, `<<"EOF"`, `<<\EOF`) or
+plain-text body. The same reading found `{name}>file`, which *assigns* `name`; it is
+rejected because it would rebind a tracked variable. The lesson generalises: when
+a node has more than one `*syntax.Word` field, each one is an expansion site, and
+an unchecked field is a hole whatever the others say.
+
+**Mutation-test the safety checks.** A suite that passes on the first run proves
+nothing about the checks it never reaches. For the 2026-10-23 work every check was
+disabled in turn in a scratch copy and the suite required to fail: the first pass
+left two survivors (a symlinked *parent* directory, and the depth rule, both masked
+by other checks), and three scope rules were killed only by `TestNotYetAllowed`,
+which is not the safety wall. All three gaps got wall cases. A check that only a
+deferred-feature table notices is unguarded.
 
 ## `styleAwk` and the goawk fork
 
@@ -421,8 +451,9 @@ stage). Rules, all fail-closed:
   "$(…)"` falls through), and accepted only by an **`ArgvDataSafe`** outer command
   — one safe under any operand value, even a flag-shaped one. So `echo "$(ls)"` and
   `cat "$(readlink -f x)"` accelerate; `sort "$(ls)"` does not.
-- `$VAR`, `$((…))`, `<(…)`, extglob, and the mksh `${ …;}` forms remain rejected;
-  an unsafe inner command (`echo "$(rm x)"`) or an unsafe inner pipeline stage
+- An unbound `$VAR`, `$((…))`, `<(…)`, extglob, and the mksh `${ …;}` forms remain
+  rejected (a *literal-bound* `$VAR` is its literal — next section); an unsafe inner
+  command (`echo "$(rm x)"`) or an unsafe inner pipeline stage
   (`echo "$(cat x | sed …)"`) falls the whole thing through.
 
 One asymmetry worth knowing (it surprised the implementation's own first test
@@ -439,6 +470,62 @@ is correctly rejected (`sort --output="$(ls)"` → the opaque positional fails t
 
 A `--`-leniency tier (admitting commands like `sort` after a literal `--`) is
 designed but deferred — see [FUTURE-WORK.md](FUTURE-WORK.md).
+
+## Literal-bound variables (`$VAR`, since 2026-10-23)
+
+`S=/tmp/x; grep foo "$S/a.txt"` is the single commonest shape agents send: the
+variable was assigned a literal a moment earlier, so `"$S/a.txt"` is as knowable as
+the literal path. The walk now carries a `scope`, binds each literal assignment,
+and replaces a bound `$S`/`${S}` by its value, so every later check — the command's
+spec, the redirect rules — sees the exact string bash would. The mechanics and the
+full rule list are the header comment of `vars.go`; the argument rests on three
+properties:
+
+- **The value is exact.** Nothing on the right-hand side may be interpreted at
+  assignment time (substitution, unbound variable, tilde, backslash, `$'…'`), and an
+  unquoted *use* must not word-split or glob. Where text and meaning can differ, the
+  binding is refused, not approximated.
+- **The binding is believed only where bash made it.** A statement list binds for
+  what follows; an `&&` chain binds along the chain and no further (an earlier link
+  may have failed); `||` branches and pipeline stages are isolated (conditional,
+  subshell); `( … )` and `"$(…)"` inherit but never leak. Every one of those
+  conservative choices is a wall case where the leak would aim a scratchpad write
+  at a different file, plus a `TestNotYetAllowed` case where it is merely harmless.
+- **The assignment does nothing else.** Assigning an *exported* name changes every
+  later child's environment — `HOME=…; git log` reads another `.gitconfig`, whose
+  pager is a program. So only 1–3-character names are bindable, minus a reserved
+  handful (`IFS`, `PS4`, `PWD`, …), and never one set in the hook's own environment.
+  This is a positive rule: in the 2026-10-23 corpus about 94% of assignments used
+  such names, and the names that steer programs (`PATH`, `HOME`, `PAGER`, `GIT_*`,
+  `LD_*`) are all longer. Nothing else in the whitelist can assign a variable
+  (`printf` has no `-v`; `read`, `declare`, `export`, `eval` are absent), which is
+  what keeps the scope exact.
+
+## Scratchpad writes (since 2026-10-23)
+
+The harness gives each session a private `scratchpad_dir` and tells the agent to put
+temporary output there, and some workspace rules *require* write-to-a-file over
+truncating a pipe — so `cmd > "$S/out.txt"` is the shape a well-behaved agent sends,
+and until now every one of them prompted. A write redirect now allows when its exact
+target (`exactPath`) is a data file directly inside the event's `scratchpad_dir`.
+The checks are the header comment of `scratch.go`; the argument:
+
+- **The directory is validated per call**, not trusted: real path, a directory we
+  own, not group/world-writable, and not an ancestor of `$HOME` or the working
+  directory — a harness that sent `/` or `$HOME` must not mean "write anywhere".
+- **The target cannot be picked up as configuration.** Tools find config by name —
+  a bare repo's `config`/`HEAD`, `.git/`, `.jj/`, `flake.nix`, `*.toml` — and an
+  allowed `git -C`/`jj -R` pointed at the scratchpad would honour it (`core.pager` is
+  a program). So the target must sit at the top of the directory, not be a dotfile,
+  and carry an extension from a positive data list (`.txt`, `.json`, `.log`, …): no
+  configuration format is on it. In the corpus 98.9% of scratch writes were already
+  top-level and 87% were `.txt`.
+- **The write cannot be carried elsewhere.** An existing target must be a regular
+  file we own with one link: a symlink or a hard link would redirect the write.
+
+Residual, stated: the checks run at classify time, so a process racing to swap the
+target before bash opens it is not prevented — but anything able to do that already
+runs code as this user.
 
 ## Deferred wrapper shapes
 

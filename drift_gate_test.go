@@ -15,11 +15,11 @@ import (
 // main having no other exit path here — there is no failLoud on this route.
 func TestDriftWithholdsAllowForOtherwiseAllowableCommand(t *testing.T) {
 	// `ls` is squarely on the whitelist: with no drift it allows.
-	if !shouldAllow("ls", nil) {
+	if !shouldAllow("ls", nil, "") {
 		t.Fatal("shouldAllow(\"ls\", nil) = false, want true (test premise broken: ls must be whitelisted)")
 	}
 	// Same command, one unknown field: the allow is withheld.
-	if shouldAllow("ls", []string{"surprise"}) {
+	if shouldAllow("ls", []string{"surprise"}, "") {
 		t.Error("shouldAllow(\"ls\", [surprise]) = true, want false — an unknown field must withhold the allow")
 	}
 }
@@ -29,7 +29,7 @@ func TestDriftWithholdsAllowForOtherwiseAllowableCommand(t *testing.T) {
 // turns the gate into the sole decision.
 func TestDriftGateDoesNotOverrideTheClassifier(t *testing.T) {
 	for _, drift := range [][]string{nil, {"surprise"}} {
-		if shouldAllow("rm -rf /tmp/zzz", drift) {
+		if shouldAllow("rm -rf /tmp/zzz", drift, "") {
 			t.Errorf("shouldAllow(rm -rf, %v) = true, want false", drift)
 		}
 	}
@@ -54,7 +54,7 @@ func TestCurrentHarnessPayloadStillAllows(t *testing.T) {
 	if len(drift) != 0 {
 		t.Fatalf("drift = %v, want none — enumerate the new field on the struct", drift)
 	}
-	if !shouldAllow(ev.ToolInput.Command, drift) {
+	if !shouldAllow(ev.ToolInput.Command, drift, "") {
 		t.Error("a fully-enumerated harness payload must still allow a whitelisted command")
 	}
 }
@@ -73,7 +73,7 @@ func TestDriftInsideToolInputWithholdsAllow(t *testing.T) {
 	if len(drift) != 1 || drift[0] != "tool_input.brand_new_input_field" {
 		t.Fatalf("drift = %v, want [tool_input.brand_new_input_field]", drift)
 	}
-	if shouldAllow(ev.ToolInput.Command, drift) {
+	if shouldAllow(ev.ToolInput.Command, drift, "") {
 		t.Error("unknown tool_input field must withhold the allow")
 	}
 }

@@ -53,16 +53,28 @@ way to understand the whole thing:
   `DisallowUnknownFields`**: `PreToolUse` exit 2 blocks the tool, so rejecting a
   harmless new harness field takes the whole Bash tool down (it did, repeatedly —
   see DESIGN.md "Defensive JSON contract").
-- **`classify.go`** — the shell-AST walk. `classifyCommand` parses with
-  `mvdan.cc/sh/v3/syntax`, then recurses: `&&`/`||`/pipe/`(subshell)` recurse,
-  every other compound kind is rejected, an unknown AST node calls `failLoud`.
-  `wordLiteral` rejects any word with expansion (`$VAR`, `$(...)`, `<(...)`, …).
-  `argTokens` then classifies each operand as a literal or — the one allowed
-  expansion — a quoted `"$(...)"` command substitution whose inner command
-  classifies read-only (`wordQuotedSubst`/`classifyCmdSubst`); that token reaches a
-  spec only as an opaque positional, only for an `ArgvDataSafe` command. The
-  command name must stay literal. `safeRedirect` allows reads and writes only to
-  `/dev/null`.
+- **`classify.go`** — the shell-AST walk. `classifyCommandIn(cmd, scratch)` parses
+  with `mvdan.cc/sh/v3/syntax` and walks with a `scope` (literal bindings + the
+  validated scratchpad dir); `classifyCommand(cmd)` is the no-scratchpad form the
+  test tables and triage use. `&&`/`||`/pipe/`(subshell)` recurse — and decide which
+  bindings each side sees — every other compound kind is rejected, an unknown AST
+  node or binary operator calls `failLoud`. `wordLiteral` (still used for the
+  command name, which must stay literal) rejects any expansion; `resolveWord` is
+  `wordLiteral` plus bound `$VAR`. `argTokens` classifies each operand as a literal
+  or — the one allowed expansion — a quoted `"$(...)"` command substitution whose
+  inner command classifies read-only (`wordQuotedSubst`/`classifyCmdSubst`); that
+  token reaches a spec only as an opaque positional, only for an `ArgvDataSafe`
+  command. `safeRedirect` allows reads, writes to `/dev/null`, and writes of a data
+  file into the scratchpad; it inspects heredoc **bodies** (an unquoted one is
+  expanded by bash) and rejects `{name}>`.
+- **`vars.go`** — literal-bound variables (FUTURE-WORK §6): which assignments bind
+  (`bindAssigns`, `bindableName`), what a bound `$VAR` resolves to (`boundParam`,
+  `resolveWord`), and the stricter `exactPath` used where a path prefix is the
+  security boundary. The safety argument is its header comment.
+- **`scratch.go`** + **`scratch_unix.go`/`scratch_other.go`** — scratchpad writes
+  (§10): `validScratchDir` (per-call validation of the event's `scratchpad_dir`),
+  `scratchTargetOK` (top-level data file, no symlink/hard link). Ownership needs
+  `syscall.Stat_t`, so the non-Unix build reports failure and the feature is off.
 - **`spec.go`** — `commandSpec` + the five `flagStyle` matchers (`matchGNU`,
   `matchFind`, `matchWrapper`, `matchXargs`, `matchAwk`). This is the
   flag/subcommand/positional engine; the data it runs on lives in `commands.go`.
@@ -108,7 +120,10 @@ The test corpus is the spec: `TestMustAllow` (forms that must classify allow),
 because a classifier feature isn't built — a regression here is a feature landing,
 not an incident), and `TestEventDecode*` (the JSON contract). Each case is a bare
 command string in a table — add to the right table, don't write new test
-functions. A new fall-through case goes in `TestMustNotAllow` *unless* you can show
+functions. The one exception is behaviour that needs a filesystem fixture:
+`scratch_test.go` (§10, real temp directories, symlinks, hard links, a FIFO) and
+`vars_test.go`, whose `init` gives the tables an empty environment because
+`bindableName` refuses names set in the hook's environment. A new fall-through case goes in `TestMustNotAllow` *unless* you can show
 it is genuinely harmless, in which case it goes in `TestNotYetAllowed`. See
 FUTURE-WORK.md "Two kinds of must not allow".
 

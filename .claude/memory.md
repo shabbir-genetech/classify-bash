@@ -66,10 +66,22 @@ README.md — this file is for how we work, not what the code is.)
   Man pages describe intent; the marker file reports behaviour. Corollary: give
   the probe script a non-blocking body (`touch marker` and exit) — an `exec cat`
   tail once hung a `sort --compress-program` probe for two minutes.
+- **Mutation-test a new safety check before trusting a green suite.** Disable each
+  check in turn in a scratch copy (a list of old→new string substitutions and a
+  loop over `go test`), require a failure, and run the loop against the safety
+  tables only (`-run 'TestMustNotAllow|TestScratch…'`): a check killed only by
+  `TestNotYetAllowed` is unguarded. The 2026-10-23 pass found two survivors and
+  three wall gaps this way. See DESIGN.md "AST handling".
+- **Read every `*syntax.Word` field of a node you accept.** The heredoc hole
+  (fixed `0751c71`) was a checked `Redirect.Word` beside an unchecked
+  `Redirect.Hdoc`; it was found by reading the code, and no log could have shown
+  it, because allows are never logged.
 - **Cross-compile when touching imports**: the dev shell `go test` and `nix flake
   check` build only for the host (Linux), so they miss cross-platform breaks (a
   Unix-only stdlib import can pass them and still fail on Windows). Sanity-check
-  with `GOOS=windows go build ./...` / `GOOS=darwin go build ./...`. See DESIGN.md
+  with `GOOS=windows go build -o /dev/null ./...` / `GOOS=darwin go build -o /dev/null ./...`
+  (without `-o`, a single `main` package writes its binary into the repo root — a
+  5 MiB untracked `classify-bash` that jj refuses to snapshot). See DESIGN.md
   "Build gotcha".
 
 ## Version control (jj)

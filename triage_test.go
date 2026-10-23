@@ -144,9 +144,10 @@ func blameCommand(parser *syntax.Parser, cmd string) string {
 	if err != nil {
 		return "<unparseable by mvdan/sh>"
 	}
+	sc := newScope("")
 	for _, st := range f.Stmts {
-		if !classifyStmt(st) {
-			return blameStmt(st)
+		if !classifyStmtBind(st, sc) {
+			return blameStmt(st, sc)
 		}
 	}
 	return "<no blocker found — classifier and triage disagree, investigate>"
@@ -155,8 +156,12 @@ func blameCommand(parser *syntax.Parser, cmd string) string {
 // blameStmt mirrors classifyStmt's checks in the same order and names the first
 // failure. It only ever descends into a child that classifyStmt itself rejects,
 // so the tag it returns is the actual blocker rather than a co-occurring
-// innocent command earlier in the line.
-func blameStmt(st *syntax.Stmt) string {
+// innocent command earlier in the line. sc carries the same literal bindings
+// the classifier had at this point, so an accepted assignment is never blamed.
+func blameStmt(st *syntax.Stmt, sc *scope) string {
+	if call, ok := st.Cmd.(*syntax.CallExpr); ok && len(call.Args) == 0 && len(call.Assigns) > 0 {
+		return "<variable assignment: non-literal value or unbindable name>"
+	}
 	if st.Background {
 		return "<background &>"
 	}
@@ -167,30 +172,39 @@ func blameStmt(st *syntax.Stmt) string {
 		return "<negated !>"
 	}
 	for _, r := range st.Redirs {
-		if !safeRedirect(r) {
-			if target, ok := wordLiteral(r.Word); ok {
+		if !safeRedirect(r, sc) {
+			if target, ok := resolveWord(r.Word, sc); ok {
 				return "<write redirect to " + target + ">"
 			}
 			return "<redirect to an expansion>"
 		}
 	}
-	return blameCmd(st.Cmd)
+	return blameCmd(st.Cmd, sc)
 }
 
-func blameCmd(cmd syntax.Command) string {
+func blameCmd(cmd syntax.Command, sc *scope) string {
 	switch c := cmd.(type) {
 	case *syntax.CallExpr:
-		return blameCall(c)
+		return blameCall(c, sc)
 	case *syntax.BinaryCmd:
-		// Descend only into the side that actually fails.
-		if !classifyStmt(c.X) {
-			return blameStmt(c.X)
+		// Descend only into the side that actually fails, in the scope the
+		// classifier gave it.
+		if c.Op == syntax.AndStmt {
+			chain := sc.child()
+			if !classifyAndChain(c.X, chain) {
+				return blameStmt(c.X, chain)
+			}
+			return blameStmt(c.Y, chain)
 		}
-		return blameStmt(c.Y)
+		if !classifyStmtBind(c.X, sc.child()) {
+			return blameStmt(c.X, sc.child())
+		}
+		return blameStmt(c.Y, sc.child())
 	case *syntax.Subshell:
+		inner := sc.child()
 		for _, s := range c.Stmts {
-			if !classifyStmt(s) {
-				return blameStmt(s)
+			if !classifyStmtBind(s, inner) {
+				return blameStmt(s, inner)
 			}
 		}
 		return "<empty subshell>"
@@ -228,7 +242,7 @@ func blameCmd(cmd syntax.Command) string {
 // (add-a-command), it is present but its spec rejected these args (extend-a-spec,
 // and the tag carries the flag that is most likely responsible), or an operand
 // carried an expansion the classifier will not accept (a classifier feature).
-func blameCall(c *syntax.CallExpr) string {
+func blameCall(c *syntax.CallExpr, sc *scope) string {
 	if len(c.Args) == 0 {
 		if len(c.Assigns) > 0 {
 			return "<variable assignment>"
@@ -249,7 +263,7 @@ func blameCall(c *syntax.CallExpr) string {
 	if !ok {
 		return "MISSING-CMD " + name
 	}
-	toks, ok := argTokens(c.Args[1:])
+	toks, ok := argTokens(c.Args[1:], sc)
 	if !ok {
 		return "EXPANSION-ARG " + name
 	}

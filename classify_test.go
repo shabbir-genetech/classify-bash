@@ -360,6 +360,21 @@ func TestMustAllow(t *testing.T) {
 		"cat <<EOF\nplain text only\nEOF",
 		"cat <<-EOF\n\tindented plain text\n\tEOF",
 		"grep -n foo <<'EOF'\nfoo $(bar)\nEOF",
+
+		// §6: a variable bound to a literal earlier in the same command is that
+		// literal. Statement lists bind for everything after them.
+		`S=/tmp/x; cat "$S/a.txt"`,
+		"S=/tmp/x\ngrep -n foo \"$S/a.txt\"",
+		`S=/tmp/x; cat ${S}/a.txt`,
+		`S=/tmp/x; ls $S`,                  // unquoted is fine when the value cannot split or glob
+		`A=x B="$A/y"; echo "$B"`,          // left-to-right within one statement
+		`D=/repo && git -C "$D" log -1`,    // && carries bindings forward
+		`A=1 && B=2 && echo "$A$B"`,        // …along the whole chain
+		`S=/tmp/x; (cat "$S/a")`,           // a subshell inherits
+		`R=abc; echo "$(echo "$R")"`,       // so does a quoted substitution
+		`S=/tmp/x; cat < "$S/a.txt"`,       // read redirect through a binding
+		`S=/tmp/x; cat "$S/a" | grep -n y`, // binding used before a pipe
+		`S='/tmp/a b'; cat "$S/c"`,         // quoted use keeps a spaced value whole
 	}
 	for _, c := range cases {
 		if got := classifyCommand(c); got != decisionAllow {
@@ -526,9 +541,9 @@ func TestMustNotAllow(t *testing.T) {
 		"jj -R /tmp restore f",
 		"jj -R /tmp config set x y",
 		"jj -R /tmp op undo",
-		`jj -R "$(echo /tmp)" st`, // substituted flag value
+		`jj -R "$(echo /tmp)" st`,            // substituted flag value
 		`jj diff --from "$(echo @-)" --to @`, // substituted revset value
-		"jj -R /tmp",              // flag but no subcommand
+		"jj -R /tmp",                         // flag but no subcommand
 		"jj -R",
 		// Deliberate exclusions from the global flag set. --config sets
 		// ui.pager, which jj spawns on exactly the read-only subcommands this
@@ -741,12 +756,43 @@ func TestMustNotAllow(t *testing.T) {
 		"cat <<EOF\n`touch /tmp/pwned`\nEOF",
 		"cat <<-EOF\n\t$(touch /tmp/pwned)\n\tEOF",
 		"cat <<EOF\nok $(touch /tmp/pwned) ok\nEOF",
-		"cat <<EOF\n${x:=assigned}\nEOF",  // parameter expansion with an assignment
-		"cat <<EOF\n$((x=1))\nEOF",        // arithmetic with an assignment
-		"cat <<EOF\n$HOME\nEOF",           // any expansion falls through, not just exec
-		"echo hi && cat <<EOF\n$(touch /tmp/pwned)\nEOF", // inside a list
-		"(cat <<EOF\n$(touch /tmp/pwned)\nEOF\n)",        // inside a subshell
+		"cat <<EOF\n${x:=assigned}\nEOF",                    // parameter expansion with an assignment
+		"cat <<EOF\n$((x=1))\nEOF",                          // arithmetic with an assignment
+		"cat <<EOF\n$HOME\nEOF",                             // any expansion falls through, not just exec
+		"echo hi && cat <<EOF\n$(touch /tmp/pwned)\nEOF",    // inside a list
+		"(cat <<EOF\n$(touch /tmp/pwned)\nEOF\n)",           // inside a subshell
 		"echo \"$(cat <<EOF\n$(touch /tmp/pwned)\nEOF\n)\"", // inside a quoted substitution
+
+		// §6 safety wall. Names that steer child processes are never bindable…
+		"PATH=/tmp/evil; ls",
+		"HOME=/tmp/h; git log",
+		"PAGER=/tmp/p; git log",
+		"GIT_PAGER=/tmp/p; git log",
+		"IFS=/; ls",
+		"PS4=x; ls",
+		"_=x; ls",
+		// …and the value must be exactly what bash will produce.
+		`S=$(id); echo "$S"`,
+		"S=`id`; echo \"$S\"",
+		`S=$((1+1)); echo "$S"`,
+		`S=~/x; cat "$S"`,          // tilde-expanded in an assignment
+		`S=a\ b; cat "$S"`,         // backslash escape
+		`S=$'\x2e\x2e'; cat "$S"`,  // ANSI-C escapes
+		`S='a b'; cat $S`,          // unquoted: splits into two words
+		`S='*'; cat $S`,            // unquoted: globs
+		`S=; cat $S`,               // unquoted empty: the word disappears
+		`S+=x; echo "$S"`,          // append to an unknown value
+		`S[0]=x; echo "$S"`,        // array element
+		`echo "${S:-/etc/passwd}"`, // operator forms, here on an unbound name
+		`S=x; echo "${S:=y}"`,      // …which can assign
+		`S=x; echo "${#S}"`,
+		// Bindings must not be believed where bash would not have made them.
+		`sort "$S" f`,                            // unbound: could come from the env
+		`S=--output=/tmp/w; sort "$S" f`,         // substituted value still meets the spec
+		`S=ls; $S`,                               // the command name stays literal
+		`S=/tmp/x; true {S}>/dev/null; cat "$S"`, // {name}> rebinds S to an fd number
+		`true {fd}>/dev/null`,
+		"S=x ls", // env prefix, not a binding
 	}
 	for _, c := range cases {
 		if got := classifyCommand(c); got != decisionFallThrough {
@@ -815,6 +861,15 @@ func TestNotYetAllowed(t *testing.T) {
 		// gh read subcommands not in the whitelisted set (pr/issue not added yet).
 		"gh pr view 123",
 		"gh issue list",
+
+		// §6 scoping is conservative where bash's own outcome is harmless: a
+		// binding never escapes the construct that made it, even when bash
+		// would in fact have kept it.
+		`S=/tmp/x && true; cat "$S/a"`,           // S IS bound in bash (assignment cannot fail)
+		`(S=/tmp/x); echo "$S"`,                  // bash: S unbound, echo "" — harmless
+		`false || S=/tmp/x; echo "$S"`,           // bash: S bound, but only on this path
+		`S=/tmp/x | true; echo "$S"`,             // bash: pipeline stage is a subshell
+		`PROJECT_ROOT=/r; cat "$PROJECT_ROOT/a"`, // long names are not bindable
 	}
 	for _, c := range cases {
 		if got := classifyCommand(c); got != decisionFallThrough {

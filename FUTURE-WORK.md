@@ -226,6 +226,34 @@ fall-throughs would allow under the current build, so the corpus is live, not st
   `rm` 17, `kill` 18, `pkexec`/`nrs` 24, `devenv shell`/`up`/`processes` 134
   (execution wrappers, see §2's "Deferred wrapper shape"), `python3`/`bash` 33.
 
+## Observed demand — fourth pass (2026-10-23, `TestTriage` + replay)
+
+13,118 fall-through records over four weeks (2026-09-25 → 10-23; the journal held no
+older ones), judged by the `392eebb` whitelist, which predates them all, so nothing
+was already-fixed noise. 0 `failloud`, 0 `schema_drift`.
+
+- **`<variable assignment>` was the primary blocker on 9,573 records (73%)** — no
+  longer "mostly wrapping a mutating commit" (third pass): 82% of assignment-bearing
+  records bound a path under the session scratchpad, in the shape `S=<scratchpad>`,
+  `cmd > "$S/out.txt"`, `cat "$S/out.txt"`. The harness asks agents to keep temporary
+  output in the scratchpad, and no-truncation rules steer them to redirect rather
+  than pipe into `tail`, so the idiom is what a rule-following agent sends.
+- **The two levers stack.** Rewriting the commands and replaying: inlining literal
+  assignments alone flipped 3.8%; inlining *and* dropping the scratchpad redirect and
+  read-back flipped 16.5%. Shipping §6 + §10 together, the built binary flipped
+  **2,110 records (16.1%)**, with 0 blocked.
+- **Next tier, each a few hundred records:** `MISSING-CMD sed` 369 (§4 — now real
+  demand), `<for/while loop>` 240 (§7), `MISSING-CMD az` 188, `command grep` 65
+  (`command`'s spec rejects the wrapped command's flags). Small read-only gaps:
+  `jj file show`, `jj --ignore-working-copy`, `git ls-remote`, `pgrep`.
+- **Correctly rejected, no action:** `devenv shell` 323, `jj commit`/`bookmark`/`git
+  push`/`new` (~420 together), `rm` 55, `pkexec` 38, interpreters.
+- **Method notes.** A regex segmenter attributed ~3.7k records to fragments (`{`,
+  `(cd …`, `for`) that are artifacts of splitting on newlines — `TestTriage` again
+  had the right answer. And the log is not durable: the host's journal kept only
+  about four weeks (it is capped by file *count*, so retention is measured in boots),
+  so a "since logging began" claim must check the first record's timestamp.
+
 ---
 
 ## 1. Command substitution `$(...)` — **IMPLEMENTED (v1 — Tier 1)**
@@ -345,6 +373,11 @@ not DoS).
 > showed up only as `sed -i` (write — correctly rejected) or inside an
 > already-rejected pipeline; no read-only `sed` line fell through *because of sed
 > itself*. Demand bar for building this is unmet.
+>
+> **Superseded.** The third pass (2026-07-27) found `sed` the largest `MISSING-CMD`
+> (67), and the fourth (2026-10-23) the primary blocker on **369** records, nearly
+> all `sed -n '<range>p' <file>`. The demand bar is now met; the parser question
+> (`-i`, and the `e`, `w`/`W`, `r`/`R`, `s///w` commands) is what remains.
 
 ### Feasibility
 Doable by direct analogy to `awk.go` (`classifyAwkProgram` positively
@@ -465,7 +498,26 @@ fall-throughs through the then-new binary, 10 flipped to allow — only ~2
 
 ---
 
-## 6. `$VAR` expansion for locally-assigned literals — **RESEARCH (refines §3)**
+## 6. `$VAR` expansion for locally-assigned literals — **IMPLEMENTED (2026-10-23)**
+
+> **Shipped** with §10. The research questions below were answered as follows; the
+> rationale is DESIGN.md "Literal-bound variables", the rule list `vars.go`.
+> - *Symbol-table model:* a `scope` per walk. A statement list binds sequentially;
+>   an `&&` chain binds along itself and no further; `||` branches and pipeline
+>   stages are isolated; `( … )` and `"$(…)"` inherit and never leak. Re-assignment
+>   overwrites. Nothing else whitelisted can assign (`printf` has no `-v`;
+>   `{name}>` redirects are now rejected).
+> - *Default-closed:* every unbound name, every operator form (`${a:-b}`, `${#a}`,
+>   …), and every right-hand side with an expansion, tilde, backslash or `$'…'`
+>   falls through. An unquoted use must not split or glob.
+> - *Not anticipated here:* the **name**. Assigning an exported variable changes
+>   child processes, so bindable names are 1–3 characters, minus a reserved few,
+>   and absent from the hook's environment. A command made only of assignments
+>   still falls through.
+> - *Acceptance* as proposed, plus the scope and name cases; every check was
+>   mutation-tested (DESIGN.md "AST handling").
+
+*Original research note, kept for the reasoning:*
 
 ### Idea
 The single biggest *structural* blocker in the first corpus. The real idiom is
@@ -652,3 +704,35 @@ whether the marker appears — that is how `--tool`, `--compress-program` and
 page alone: `nix eval --expr` reads as "evaluate an expression" and the
 consequence (arbitrary file read plus outbound network) only becomes obvious
 when you run it.
+
+---
+
+## 10. Write redirects into the session scratchpad — **IMPLEMENTED (2026-10-23)**
+
+### Why
+The harness sends every event a per-session `scratchpad_dir` and tells the agent to
+keep temporary output there; some workspace rules require write-to-a-file over a
+truncating pipe. So `cmd > "$S/out.txt"` is what a well-behaved agent sends, and the
+universal write-redirect rule (only `/dev/null`) made every one of them prompt. With
+§6 it was the second half of the dominant idiom (fourth pass: 3.8% from §6 alone,
+16.1% shipped together).
+
+### What shipped
+A write redirect (`>`, `>>`, `N>`, `&>`, `&>>`, `>|`; not `<>`) allows when its exact
+target is a data file directly inside a validated scratchpad. Rationale: DESIGN.md
+"Scratchpad writes"; the checks: `scratch.go`. In the corpus 98.9% of scratch writes
+were top-level and 87% `.txt`, so the strict shape costs almost nothing. The feature
+is off (old behaviour) when the event has no usable `scratchpad_dir`, and on
+Windows/Plan 9, where ownership cannot be read.
+
+### Open
+- **Extensions.** The list is deliberately short and data-only. Source-file dumps
+  (`.cs`, `.ts`) were seen in the corpus; adding one is a judgment that no allowed
+  command auto-loads that suffix as configuration or code.
+- **Subdirectories.** Refused, because a directory is where configuration
+  discovery starts (`.git`, a bare repo, `.jj`). 1.1% of scratch writes used one.
+- **`tee "$S/x"`.** Same destination, different mechanism; `tee` is not whitelisted.
+- **Persistent shells.** A harness whose shell survives between calls could carry a
+  binding into a later call. The classifier never reads bindings across calls (each
+  call starts with an empty scope), so the only effect is an unexported shell
+  variable, which the name rule already constrains.

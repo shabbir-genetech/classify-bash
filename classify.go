@@ -14,71 +14,131 @@ const (
 	decisionAllow                       // emit allow JSON
 )
 
-// classifyCommand parses cmd as bash and returns decisionAllow only when every
+// scope is the shell state the classifier tracks while it walks one command:
+// the variables bound to a literal earlier in the same command (FUTURE-WORK §6),
+// and the session's validated scratchpad directory (§10), or "" when the
+// scratchpad feature is off. A bound `$VAR` is replaced by its literal, so every
+// later check sees exactly the string bash would.
+type scope struct {
+	vars    map[string]string
+	scratch string
+}
+
+func newScope(scratch string) *scope {
+	return &scope{vars: map[string]string{}, scratch: scratch}
+}
+
+// child copies the bindings for a construct bash runs in a subshell or runs
+// conditionally: it sees what is bound now, and nothing it binds escapes.
+func (s *scope) child() *scope {
+	c := &scope{vars: make(map[string]string, len(s.vars)), scratch: s.scratch}
+	for k, v := range s.vars {
+		c.vars[k] = v
+	}
+	return c
+}
+
+// classifyCommand classifies cmd with no scratchpad: the form the test corpus
+// and the triage replay use.
+func classifyCommand(cmd string) decision {
+	return classifyCommandIn(cmd, "")
+}
+
+// classifyCommandIn parses cmd as bash and returns decisionAllow only when every
 // statement, every nested construct, every redirect, every word, and every flag
 // matches an entry in our strict whitelist. Any uncertainty returns
 // decisionFallThrough. Unrecognized mvdan/sh AST node kinds call failLoud.
-func classifyCommand(cmd string) decision {
+// scratch is a scratchpad directory already validated by validScratchDir, or "".
+func classifyCommandIn(cmd, scratch string) decision {
 	r := strings.NewReader(cmd)
 	f, err := syntax.NewParser().Parse(r, "")
 	if err != nil {
 		// Parse failure is expected for unusual but legitimate bash. Fall through.
 		return decisionFallThrough
 	}
-	if classifyFile(f) {
+	// A command made only of assignments has nothing to accelerate, and in a
+	// harness whose shell persists between calls it is a state change that
+	// outlives this one. Assignments are accepted only as setup for a command.
+	if onlyAssignments(f.Stmts) {
+		return decisionFallThrough
+	}
+	if classifyStmts(f.Stmts, newScope(scratch)) {
 		return decisionAllow
 	}
 	return decisionFallThrough
 }
 
-func classifyFile(f *syntax.File) bool {
-	if len(f.Stmts) == 0 {
-		return false
-	}
-	for _, stmt := range f.Stmts {
-		if !classifyStmt(stmt) {
+func onlyAssignments(stmts []*syntax.Stmt) bool {
+	for _, st := range stmts {
+		call, ok := st.Cmd.(*syntax.CallExpr)
+		if !ok || len(call.Args) > 0 || len(call.Assigns) == 0 {
 			return false
 		}
 	}
 	return true
 }
 
-func classifyStmt(stmt *syntax.Stmt) bool {
+// classifyStmts walks a statement list in order. bash runs a list sequentially
+// and unconditionally, so a literal assignment binds for every later statement.
+func classifyStmts(stmts []*syntax.Stmt, sc *scope) bool {
+	if len(stmts) == 0 {
+		return false
+	}
+	for _, st := range stmts {
+		if !classifyStmtBind(st, sc) {
+			return false
+		}
+	}
+	return true
+}
+
+// classifyStmtBind accepts an assignment-only statement by binding it into sc,
+// and hands every other statement to classifyStmt.
+func classifyStmtBind(st *syntax.Stmt, sc *scope) bool {
+	if call, ok := st.Cmd.(*syntax.CallExpr); ok && len(call.Args) == 0 && len(call.Assigns) > 0 {
+		return bindAssigns(st, call, sc)
+	}
+	return classifyStmt(st, sc)
+}
+
+func classifyStmt(stmt *syntax.Stmt, sc *scope) bool {
 	if stmt.Background || stmt.Coprocess || stmt.Negated {
 		return false
 	}
 	for _, r := range stmt.Redirs {
-		if !safeRedirect(r) {
+		if !safeRedirect(r, sc) {
 			return false
 		}
 	}
-	return classifyCmd(stmt.Cmd)
+	return classifyCmd(stmt.Cmd, sc)
 }
 
-func classifyCmd(cmd syntax.Command) bool {
+func classifyCmd(cmd syntax.Command, sc *scope) bool {
 	switch c := cmd.(type) {
 	case *syntax.CallExpr:
-		return classifyCall(c)
+		return classifyCall(c, sc)
 	case *syntax.BinaryCmd:
-		// && and || — both sides must be safe. Pipelines are *syntax.BinaryCmd
-		// with Op == Pipe in mvdan/sh.
-		if !classifyStmt(c.X) {
-			return false
+		// Both sides must be safe. What differs is which bindings each side sees.
+		switch c.Op {
+		case syntax.AndStmt:
+			// The right side runs only if everything to its left succeeded, so
+			// bindings flow along an && chain. They stop at the end of it: if an
+			// earlier link failed, a later assignment never ran.
+			chain := sc.child()
+			return classifyAndChain(c.X, chain) && classifyAndChain(c.Y, chain)
+		case syntax.OrStmt, syntax.Pipe, syntax.PipeAll:
+			// || runs its right side only when the left FAILED, and each pipeline
+			// stage is its own subshell, so neither side sees the other's bindings.
+			return classifyStmtBind(c.X, sc.child()) && classifyStmtBind(c.Y, sc.child())
+		default:
+			failLoud("unknown binary op: %v", c.Op)
+			return false // unreachable
 		}
-		return classifyStmt(c.Y)
 	case *syntax.Subshell:
 		// ( … ) — recurse into the inner statements. Each must classify safe
 		// on its own; same rule as && / ||. Parens are just a scope boundary,
-		// not a bypass. The empty-Stmts guard mirrors classifyFile.
-		if len(c.Stmts) == 0 {
-			return false
-		}
-		for _, s := range c.Stmts {
-			if !classifyStmt(s) {
-				return false
-			}
-		}
-		return true
+		// not a bypass: bindings come in, none go out.
+		return classifyStmts(c.Stmts, sc.child())
 	case *syntax.Block,
 		*syntax.IfClause, *syntax.ForClause, *syntax.WhileClause, *syntax.CaseClause,
 		*syntax.FuncDecl, *syntax.LetClause, *syntax.TimeClause, *syntax.CoprocClause,
@@ -98,11 +158,22 @@ func classifyCmd(cmd syntax.Command) bool {
 	}
 }
 
+// classifyAndChain classifies one link of an && chain in the chain's own scope,
+// flattening nested && so `A=1 && B=2 && cmd "$A$B"` sees both bindings
+// (mvdan/sh parses it left-associatively, as ((A=1 && B=2) && cmd)).
+func classifyAndChain(st *syntax.Stmt, chain *scope) bool {
+	if b, ok := st.Cmd.(*syntax.BinaryCmd); ok && b.Op == syntax.AndStmt &&
+		len(st.Redirs) == 0 && !st.Background && !st.Coprocess && !st.Negated {
+		return classifyAndChain(b.X, chain) && classifyAndChain(b.Y, chain)
+	}
+	return classifyStmtBind(st, chain)
+}
+
 // classifyCall checks a single command invocation against the whitelist.
-func classifyCall(c *syntax.CallExpr) bool {
-	// Assignments-only statements (`FOO=bar`) parse as CallExpr with empty Args
-	// and non-empty Assigns. We don't whitelist any of these — they mutate the
-	// shell env in ways we'd rather not auto-allow.
+func classifyCall(c *syntax.CallExpr, sc *scope) bool {
+	// An env-prefix assignment (`FOO=bar cmd`) exports FOO to cmd alone, which
+	// is how a pager, editor or loader gets swapped in. Never allowed. A
+	// statement that is ONLY assignments is handled by bindAssigns instead.
 	if len(c.Assigns) > 0 {
 		return false
 	}
@@ -110,7 +181,7 @@ func classifyCall(c *syntax.CallExpr) bool {
 		return false
 	}
 	// The command name must be a literal so we know which spec applies; a
-	// substituted name like `$(echo ls)` is rejected here.
+	// substituted name like `$(echo ls)`, or even a bound `$VAR`, is rejected.
 	name, ok := wordLiteral(c.Args[0])
 	if !ok {
 		return false
@@ -119,29 +190,43 @@ func classifyCall(c *syntax.CallExpr) bool {
 	if !ok {
 		return false
 	}
-	toks, ok := argTokens(c.Args[1:])
+	toks, ok := argTokens(c.Args[1:], sc)
 	if !ok {
 		return false
 	}
 	return spec.match(toks)
 }
 
-// safeRedirect returns true for redirects that cannot cause a write (or that
-// write only to /dev/null, which is observationally inert).
-func safeRedirect(r *syntax.Redirect) bool {
+// safeRedirect returns true for redirects that cannot cause a write, that
+// write only to /dev/null (observationally inert), or that write a data file
+// in the session's scratchpad (§10, see scratchTargetOK).
+func safeRedirect(r *syntax.Redirect, sc *scope) bool {
 	if r == nil || r.Word == nil {
 		return false
 	}
-	target, ok := wordLiteral(r.Word)
+	// `{name}>file` makes bash ASSIGN the new descriptor number to name. That
+	// would silently rebind a variable this walk tracks as a literal.
+	if r.N != nil && strings.HasPrefix(r.N.Value, "{") {
+		return false
+	}
+	target, ok := resolveWord(r.Word, sc)
 	if !ok {
-		return false // e.g. `> $(...)` or `> $VAR`
+		return false // e.g. `> $(...)` or an unbound `> $VAR`
 	}
 	switch r.Op {
 	case syntax.RdrIn:
 		// `< file` — pure read. Safe iff the source is a literal path.
 		return true
-	case syntax.RdrOut, syntax.AppOut, syntax.RdrAll, syntax.AppAll, syntax.ClbOut, syntax.RdrInOut:
-		// Any write-capable redirect must target literal /dev/null.
+	case syntax.RdrOut, syntax.AppOut, syntax.RdrAll, syntax.AppAll, syntax.ClbOut:
+		if target == "/dev/null" {
+			return true
+		}
+		// The scratchpad check needs the path bash will really open, so it
+		// re-resolves the word under the stricter exactPath rules.
+		path, ok := exactPath(r.Word, sc)
+		return ok && sc.scratch != "" && scratchTargetOK(sc.scratch, path)
+	case syntax.RdrInOut:
+		// `<>` opens read-write without truncating; nothing needs it.
 		return target == "/dev/null"
 	case syntax.Hdoc, syntax.DashHdoc:
 		// A heredoc feeds stdin to the command, which must still classify safe on
@@ -183,19 +268,20 @@ func hdocBodyLiteral(body *syntax.Word) bool {
 
 // argTokens classifies each operand word as either a literal value or an opaque
 // "substituted" operand — a quoted `$(...)` whose inner command classifies
-// read-only safe. Returns (nil, false) if any word is neither: a `$VAR`, an
-// unquoted `$(...)`, a process substitution, arithmetic, an extglob, or a quoted
-// substitution whose inner command is not safe. The substituted bit travels with
-// the token into the matchers, which accept it only as a positional and only for
-// an ArgvDataSafe spec.
-func argTokens(ws []*syntax.Word) ([]argToken, bool) {
+// read-only safe. A `$VAR` bound to a literal earlier in the command counts as
+// that literal (resolveWord). Returns (nil, false) if any word is neither: an
+// unbound `$VAR`, an unquoted `$(...)`, a process substitution, arithmetic, an
+// extglob, or a quoted substitution whose inner command is not safe. The
+// substituted bit travels with the token into the matchers, which accept it only
+// as a positional and only for an ArgvDataSafe spec.
+func argTokens(ws []*syntax.Word, sc *scope) ([]argToken, bool) {
 	out := make([]argToken, 0, len(ws))
 	for _, w := range ws {
-		if s, ok := wordLiteral(w); ok {
+		if s, ok := resolveWord(w, sc); ok {
 			out = append(out, argToken{lit: s})
 			continue
 		}
-		if wordQuotedSubst(w) {
+		if wordQuotedSubst(w, sc) {
 			out = append(out, argToken{subst: true})
 			continue
 		}
@@ -211,7 +297,7 @@ func argTokens(ws []*syntax.Word) ([]argToken, bool) {
 // anywhere, makes it not a quoted-substitution word. Requiring double quotes pins
 // the expansion to a single argv operand (no word-splitting, no globbing), so it
 // can never inject extra argv words.
-func wordQuotedSubst(w *syntax.Word) bool {
+func wordQuotedSubst(w *syntax.Word, sc *scope) bool {
 	if w == nil {
 		return false
 	}
@@ -225,13 +311,20 @@ func wordQuotedSubst(w *syntax.Word) bool {
 				switch ip := inner.(type) {
 				case *syntax.Lit:
 					// Literal text within the quotes — fine.
+				case *syntax.ParamExp:
+					// A bound variable is literal text here; the token is opaque
+					// anyway, so its value does not matter, only that it is bound.
+					if _, ok := boundParam(ip, sc); !ok {
+						return false
+					}
 				case *syntax.CmdSubst:
-					if !classifyCmdSubst(ip) {
+					// A substitution is a subshell: it sees our bindings, keeps its own.
+					if !classifyCmdSubst(ip, sc.child()) {
 						return false
 					}
 					sawSubst = true
 				default:
-					// ParamExp ($VAR), ArithmExp, ProcSubst, nested quotes, … reject.
+					// Unbound $VAR, ArithmExp, ProcSubst, nested quotes, … reject.
 					return false
 				}
 			}
@@ -246,19 +339,14 @@ func wordQuotedSubst(w *syntax.Word) bool {
 // classifyCmdSubst reports whether a `$(...)` command substitution is read-only
 // safe: every inner statement must itself classify safe — the same recursion as a
 // pipe stage or subshell. The mksh `${ …;}` / `${|…;}` forms are rejected.
-func classifyCmdSubst(cs *syntax.CmdSubst) bool {
+func classifyCmdSubst(cs *syntax.CmdSubst, sc *scope) bool {
 	if cs == nil || len(cs.Stmts) == 0 {
 		return false
 	}
 	if cs.TempFile || cs.ReplyVar {
 		return false
 	}
-	for _, st := range cs.Stmts {
-		if !classifyStmt(st) {
-			return false
-		}
-	}
-	return true
+	return classifyStmts(cs.Stmts, sc)
 }
 
 // wordLiteral returns the literal string value of a Word if and only if every
