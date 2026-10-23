@@ -196,7 +196,14 @@ withhold), `0751c71` (unquoted heredoc bodies — as published it auto-approves
 `cat <<EOF` around `$(cmd)`), and §6/§10. Re-count with the two `jj log` lines
 above rather than trusting a number here. Bringing its refactor across is not a
 cherry-pick: every file moved, and its "engine cannot see the host" rule meets §10's
-filesystem checks and §6's environment check head on. The parts worth porting on
+filesystem checks and §6's environment check head on. **A plain merge does not
+help** — tried 2026-10-23 with `jj new master master@fork` (then abandoned): 10
+conflicted paths, 6 of them modify/delete (`classify.go`, `main.go`, `event.go`,
+`log.go`, two test files) because jj does not follow renames, and the merged tree
+holds *two* classifiers — the fork's `internal/engine/classify.go`, which its `cmd/`
+binary builds, without the heredoc fix or §6/§10, and ours at the root in a
+`package main` whose `main.go` the fork deleted. Taking the fork's side of each
+conflict silently reverts the safety work. The parts worth porting on
 their own are `check` (classify a command without a hook payload — the integration
 contract for other hosts) and `--on-unknown-ast=fallthrough` (removes the last
 blocking path, FUTURE-WORK's open `failLoud` item). Going the other way, `0751c71`
