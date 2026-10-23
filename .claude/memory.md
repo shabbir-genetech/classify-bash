@@ -71,7 +71,11 @@ README.md — this file is for how we work, not what the code is.)
   loop over `go test`), require a failure, and run the loop against the safety
   tables only (`-run 'TestMustNotAllow|TestScratch…'`): a check killed only by
   `TestNotYetAllowed` is unguarded. The 2026-10-23 pass found two survivors and
-  three wall gaps this way. See DESIGN.md "AST handling".
+  three wall gaps this way. See DESIGN.md "AST handling". **A kill must come from a
+  test, not the compiler:** deleting a condition can leave a variable unused (`links`,
+  a loop's `p`), Go refuses to build, and the mutant reads as killed. Check that the
+  first failure names a `_test.go` line; mutate to something that still uses the
+  variable (`links >= 1`, `p == "\x00"`).
 - **A test case lifted from the log carries the log's identifiers.** Corpus
   commands contain real home paths, project codenames and scratchpad paths, and
   this repo is public (CLAUDE.md "Privacy invariant"). A wall case copied from a

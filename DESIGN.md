@@ -375,6 +375,12 @@ Two corpus-scale moves from the second pass (2026-06-10), both replay-based:
   fall-throughs (the running hook never logs an allow), so any flip is a form the
   new build would newly accelerate — a direct, per-record measure of a change's
   real value, not a guess.
+- **Prove a refactor changed nothing.** Run every distinct logged command through the
+  old and the new binary and compare the decision per command, not the totals: equal
+  counts can hide one form that newly allows and another that newly prompts. The
+  2026-10-23 fork merge moved every file and changed the CLI; across 12,556 distinct
+  commands, under both the bare and the `hook --mode=claude-lenient` registration, 0
+  decisions differed from the pre-merge binary.
 - **Detect deploy lag.** Run the same forms through the deployed `PATH` binary and
   the freshly built `./result` binary side by side; divergence means the consumer
   hasn't re-locked/rebuilt yet (see "How it's deployed" — a change only reaches the
