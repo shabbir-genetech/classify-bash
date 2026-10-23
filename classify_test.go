@@ -351,6 +351,15 @@ func TestMustAllow(t *testing.T) {
 		// (no regression for the common "flag after a revision/arg" idiom).
 		"git log HEAD -p",
 		"git show HEAD --stat",
+
+		// Heredocs whose body bash will not expand: a quoted delimiter (all three
+		// quoting forms), or an unquoted one over plain text.
+		"cat <<'EOF'\n$(touch x) `touch x` $HOME\nEOF",
+		"cat <<\"EOF\"\n$(touch x)\nEOF",
+		"cat <<\\EOF\n$(touch x)\nEOF",
+		"cat <<EOF\nplain text only\nEOF",
+		"cat <<-EOF\n\tindented plain text\n\tEOF",
+		"grep -n foo <<'EOF'\nfoo $(bar)\nEOF",
 	}
 	for _, c := range cases {
 		if got := classifyCommand(c); got != decisionAllow {
@@ -725,6 +734,19 @@ func TestMustNotAllow(t *testing.T) {
 		"gh api repos/o/r --paginate -X DELETE", // valid flag, then write flag after positional
 		"gh repo view o/r --web",                // browser launch (exec)
 		"gh repo view o/r --json name --web",    // valid flag, then --web after positional
+
+		// Unquoted heredoc bodies are EXPANDED by bash: these ran arbitrary commands
+		// and classified Allow until 2026-10-23 (the body was never inspected).
+		"cat <<EOF\n$(touch /tmp/pwned)\nEOF",
+		"cat <<EOF\n`touch /tmp/pwned`\nEOF",
+		"cat <<-EOF\n\t$(touch /tmp/pwned)\n\tEOF",
+		"cat <<EOF\nok $(touch /tmp/pwned) ok\nEOF",
+		"cat <<EOF\n${x:=assigned}\nEOF",  // parameter expansion with an assignment
+		"cat <<EOF\n$((x=1))\nEOF",        // arithmetic with an assignment
+		"cat <<EOF\n$HOME\nEOF",           // any expansion falls through, not just exec
+		"echo hi && cat <<EOF\n$(touch /tmp/pwned)\nEOF", // inside a list
+		"(cat <<EOF\n$(touch /tmp/pwned)\nEOF\n)",        // inside a subshell
+		"echo \"$(cat <<EOF\n$(touch /tmp/pwned)\nEOF\n)\"", // inside a quoted substitution
 	}
 	for _, c := range cases {
 		if got := classifyCommand(c); got != decisionFallThrough {

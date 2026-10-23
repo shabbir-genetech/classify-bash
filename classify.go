@@ -143,9 +143,18 @@ func safeRedirect(r *syntax.Redirect) bool {
 	case syntax.RdrOut, syntax.AppOut, syntax.RdrAll, syntax.AppAll, syntax.ClbOut, syntax.RdrInOut:
 		// Any write-capable redirect must target literal /dev/null.
 		return target == "/dev/null"
-	case syntax.Hdoc, syntax.DashHdoc, syntax.WordHdoc:
-		// Heredocs only feed stdin to the command. The command itself still
-		// needs to classify safe; the heredoc body is content, not a write.
+	case syntax.Hdoc, syntax.DashHdoc:
+		// A heredoc feeds stdin to the command, which must still classify safe on
+		// its own. Its BODY, though, is a word: with an unquoted delimiter bash
+		// expands it, so `cat <<EOF` around `$(cmd)` or a backquote runs cmd.
+		// mvdan/sh leaves a quoted-delimiter body (<<'EOF', <<"EOF", <<\EOF)
+		// unparsed as a single Lit, so "every part is a Lit" is exactly "bash
+		// will not expand this body". Anything else — even a plain $VAR, which
+		// could be ${x:=…} or $((…)) — falls through.
+		return hdocBodyLiteral(r.Hdoc)
+	case syntax.WordHdoc:
+		// Here-string `<<< word`: the word was already required to be literal
+		// above, so there is no hidden expansion.
 		return true
 	case syntax.DplIn, syntax.DplOut:
 		// Duplicate-fd redirects (`2>&1`, `<&3`). These don't open new files,
@@ -156,6 +165,20 @@ func safeRedirect(r *syntax.Redirect) bool {
 		failLoud("unknown redirect op: %v", r.Op)
 		return false // unreachable
 	}
+}
+
+// hdocBodyLiteral reports whether a heredoc body contains no expansion at all.
+// A nil body (an empty heredoc) is literal.
+func hdocBodyLiteral(body *syntax.Word) bool {
+	if body == nil {
+		return true
+	}
+	for _, part := range body.Parts {
+		if _, ok := part.(*syntax.Lit); !ok {
+			return false
+		}
+	}
+	return true
 }
 
 // argTokens classifies each operand word as either a literal value or an opaque
