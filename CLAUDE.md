@@ -203,7 +203,10 @@ conflicted paths, 6 of them modify/delete (`classify.go`, `main.go`, `event.go`,
 holds *two* classifiers — the fork's `internal/engine/classify.go`, which its `cmd/`
 binary builds, without the heredoc fix or §6/§10, and ours at the root in a
 `package main` whose `main.go` the fork deleted. Taking the fork's side of each
-conflict silently reverts the safety work. The parts worth porting on
+conflict silently reverts the safety work. A sync would **not** force consumers to
+re-register: the fork honours the bare flags-only invocation on a piped stdin as
+the legacy hook (`looksLikeLegacyHook`), at the cost of a `deprecated_invocation`
+log record on every call and log-and-allow drift handling (no withhold). The parts worth porting on
 their own are `check` (classify a command without a hook payload — the integration
 contract for other hosts) and `--on-unknown-ast=fallthrough` (removes the last
 blocking path, FUTURE-WORK's open `failLoud` item). Going the other way, `0751c71`
