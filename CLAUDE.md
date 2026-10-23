@@ -183,6 +183,12 @@ cherry-pick leaves the two histories permanently diverged** (the same change now
 exists under two SHAs, so `compare` reports `diverged`, not `behind`); that is
 expected, and reconciling it is a fork-side rebase, not a problem here.
 
+**Both repos are maintained; neither is being retired (owner's decision, 2026-10-23).**
+They play different roles: this one is the Claude Code hook that consumers pin; the
+fork is the host-agnostic line, with `check` as its integration contract and
+pi/oh-my-pi shims. Each merges from the other when it wants a change, so "behind" below
+describes what is available to merge, not a backlog either side owes the other.
+
 **The flow runs both ways, and the fork is behind on safety.** On 2026-10-23 the
 fork (last push 2026-09-07) lacked `fb5978c` (withhold the allow on schema drift —
 its `claude-lenient`/`claude-strict` modes are classify-anyway and block, with no
@@ -193,7 +199,9 @@ cherry-pick: every file moved, and its "engine cannot see the host" rule meets �
 filesystem checks and §6's environment check head on. The parts worth porting on
 their own are `check` (classify a command without a hook payload — the integration
 contract for other hosts) and `--on-unknown-ast=fallthrough` (removes the last
-blocking path, FUTURE-WORK's open `failLoud` item).
+blocking path, FUTURE-WORK's open `failLoud` item). Going the other way, `0751c71`
+is the change the fork most needs: it touches only `classify.go`, which the refactor
+moved but barely changed.
 
 ## Conventions
 
