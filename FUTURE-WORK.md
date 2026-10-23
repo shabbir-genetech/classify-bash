@@ -16,33 +16,48 @@ implement) · **CANDIDATE** (log-surfaced, low-risk, awaiting sign-off) ·
 **DEFERRED** (agreed valuable, parked) · **RESEARCH** (needs investigation before
 a spec).
 
-### CANDIDATE — make the unknown-AST-node failure configurable
+> **Paths:** bare filenames below (`classify.go`, `commands.go`, `spec.go`,
+> `awk.go`) are in `internal/engine/`. They sat at the repo root until the
+> package split; the file contents and line references are unchanged unless noted.
 
-`classifyCommand` calls `failLoud` (exit 2) on an `mvdan/sh` AST node kind it does
-not handle. Since `PreToolUse` exit 2 *blocks* the tool, this is the main remaining
-path by which this binary can take the Bash tool down. The JSON decoder stopped
-being one when unknown fields stopped being rejected — note they are not merely
-*tolerated* either: since `fb5978c` an unknown field **withholds the allow** without
-blocking (see DESIGN.md, "Defensive JSON contract").
+### IMPLEMENTED — make the unknown-AST-node failure configurable
 
-**Full inventory of `failLoud` call sites (7, audited 2026-09-10)** — worth stating
-because "the only remaining path" was previously written as one item and is really
-three kinds, only the first of which is upstream-triggerable:
+The exposure: the classifier called `failLoud` (exit 2) on an `mvdan/sh` AST node
+kind it did not handle, and since `PreToolUse` exit 2 *blocks* the tool, that was
+the last remaining path by which this binary could take the Bash tool down. Same
+shape as the harness-field problem from a different direction — an upstream parser
+upgrade introducing a node kind would block every command containing it.
 
-| Kind | Sites | Upstream can trigger? |
+Shipped (in the fork, merged here 2026-10-23) as `--on-unknown-ast=fail|fallthrough`,
+one of two strictness axes in `cmd/classify-bash/policy.go`, with `claude-lenient`
+selecting `fallthrough` for deployed registrations. The legacy bare registration
+keeps `fail`, on purpose: it must reproduce the pre-merge behaviour exactly.
+
+Two decisions worth not relitigating:
+
+- **The engine no longer decides what "fail" means.** `Classify` returns a
+  `Result` carrying `Unparseable` plus the error; the *adapter* maps that to exit
+  2, a block, or an ordinary decline. The engine cannot call `os.Exit` at all.
+- **One flag, not one per site.** From an adapter's point of view an unknown
+  command-AST kind and an unknown awk-AST kind mean the same thing — the
+  classifier does not understand a tree it saw. Per-site switches would be
+  speculative generality with no consumer.
+
+**Inventory of the blocking sites (re-counted 2026-10-23, after the merge).** The
+engine's aborts are policy-gated now; the CLI's exits are not:
+
+| Kind | Sites | Blocks? |
 |---|---|---|
-| Unhandled parser construct | `classify.go:96` (command kind), `classify.go:156` (redirect op), `spec.go:183` (flag style), `awk.go:114`/`awk.go:183` (awk stmt/expr kind) | **Yes** — an `mvdan.cc/sh` bump, or an awk program using a construct the fork's parser does not model |
-| Operator error at the registration site | `main.go:38` (bad `--log-*` flag) | No — stays loud deliberately |
-| I/O failure while emitting | `main.go:119` (`write stdout`) | No — but see below |
+| Unhandled construct (engine abort → `Unparseable`) | `classify.go` command kind, redirect op, **binary op** (added with §6 scoping); `spec.go` flag style; `awk.go` stmt and expr kind | only if `--on-unknown-ast=fail` (legacy path, `claude-strict`) |
+| Operator error at the registration site | `cmd/classify-bash/hook.go`: bad `--log-*` flag (legacy and `hook` paths) | yes, deliberately |
+| Policy asked to be loud | `hook.go`: unknown field under `fail` | yes, by request |
+| I/O failure while emitting | `hook.go` `emitAllow`: `write stdout` | **yes — still open, see below** |
 
-Two things the old one-line framing hid. **The awk sites are a second dependency
-surface**: an unusual-but-valid awk program can reach them without any dependency
-bump, so this is not purely a "we control when it moves" exposure. And
-**`write stdout` failing calls `failLoud`, which turns a write error into a
-*blocking* exit 2** — the one case where the failure has nothing to do with
-classification and blocking is clearly wrong; it should fall through, since a host
-that cannot read our stdout will apply its normal permission flow anyway.
-Reproduced 2026-09-10 against the deployed binary:
+**`write stdout` failing still blocks, and it should not.** `emitAllow` calls
+`failLoud` if writing the allow JSON fails, so a full disk — or a host that closes
+the pipe early — blocks every *allowable* command, while unallowable ones are
+unaffected (they never write). That is the inverse of the intended failure
+direction. Reproduced 2026-09-10 against the pre-merge binary:
 
 ```console
 $ echo '{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"ls"}}' \
@@ -52,42 +67,18 @@ $ echo $?
 2
 ```
 
-So a full disk — or any host that closes the pipe early — blocks every *allowable*
-command, while unallowable ones are unaffected (they never write). That is the
-inverse of the intended failure direction. **Smallest correct fix: `failOpen` there
-instead of `failLoud`** — the allow was not delivered, so no-opinion is exactly
-right, and the existing `undecodable` record already carries the reason. Worth doing
-independently of the AST-node flag question above; it is a two-line change with no
-interface implications.
+**Smallest correct fix: `failOpen` there instead of `failLoud`** — the allow was not
+delivered, so no-opinion is exactly right, and an `undecodable` record carries the
+reason. A two-line change with no interface implications; the merge moved it from
+`main.go` to `hook.go` without changing it.
 
-The exposure is the same shape as the harness-field problem, from a different
-direction: a `mvdan.cc/sh` upgrade that introduces a node kind would block every
-command containing it. Unlike a harness field, we control when that dependency
-moves, so it is not urgent — but the asymmetry is worth closing.
-
-Proposal: an `--on-unknown-ast=fail|fallthrough` flag, defaulting to `fail` (today's
-behavior, correct while developing the classifier) with `fallthrough` recommended
-for deployed hook registrations. Open question: whether a single flag should govern
-both this and future strictness choices, or whether each unknown-kind site deserves
-its own switch.
-
-**`fb5978c` supplies a precedent that may make the flag unnecessary.** The unknown-field
-problem was solved without a switch, by separating two things this proposal still
-conflates: *withholding the allow* (safe — the hook can only ever add an allow, so
-declining to is always available) from *blocking the call* (unsafe — exit 2 stops the
-tool). An unknown AST node could take the same route: fall through **and** log a
-record naming the node kind, giving the staleness signal that `fail` was there to
-provide, with no flag, no configuration, and no way to leave a deployed registration
-in the blocking mode by accident.
-
-The argument for keeping `fail` was "we'd rather block than ship a stale classifier."
-That is the same argument the strict JSON decoder rested on, and the same
-counter applies: **a blocking gate cannot warn you — it just stops you.** The
-distinction worth preserving is that an unhandled AST node means the classifier
-genuinely cannot reason about the command, so falling through is not merely safe but
-*correct*: no opinion is the honest answer. Worth re-deciding on that basis before
-building a flag, since a flag is a permanent interface and the log record is not.
-
+**A precedent worth keeping in mind.** `fb5978c` solved the unknown-field problem by
+separating *withholding the allow* (always safe — the hook only ever adds one) from
+*blocking the call* (exit 2). The AST flag keeps a blocking value; if the legacy
+path is ever retired, the argument for `fail` there is the same one the strict JSON
+decoder rested on, and the same counter applies: a blocking gate cannot warn you,
+it just stops you. An unhandled node means the classifier cannot reason about the
+command, so falling through is not merely safe but *correct*.
 ### Two kinds of "must not allow" (test taxonomy)
 
 The corpus splits fall-through cases by *why* they fall through, because the two
@@ -720,7 +711,7 @@ universal write-redirect rule (only `/dev/null`) made every one of them prompt. 
 ### What shipped
 A write redirect (`>`, `>>`, `N>`, `&>`, `&>>`, `>|`; not `<>`) allows when its exact
 target is a data file directly inside a validated scratchpad. Rationale: DESIGN.md
-"Scratchpad writes"; the checks: `scratch.go`. In the corpus 98.9% of scratch writes
+"Scratchpad writes"; the checks: `internal/engine/scratch.go` and `cmd/classify-bash/scratch.go`. In the corpus 98.9% of scratch writes
 were top-level and 87% `.txt`, so the strict shape costs almost nothing. The feature
 is off (old behaviour) when the event has no usable `scratchpad_dir`, and on
 Windows/Plan 9, where ownership cannot be read.

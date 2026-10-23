@@ -6,17 +6,44 @@ way it is, for anyone extending it. Agreed-but-unbuilt ideas (command
 substitution, `--` leniency, `while`, a `sed` parser) live in
 [FUTURE-WORK.md](FUTURE-WORK.md) with their caveats and open research.
 
+## The engine knows nothing about any host
+
+`internal/engine` classifies a command and returns a `Class` — `ReadOnly`,
+`NotReadOnly`, or `Unparseable` — and **never a permission decision**. What "not
+read-only" should cost a user is the host's business, and the supported hosts
+genuinely disagree: Claude Code can *grant* permission, pi can only *block*, and
+oh-my-pi adjusts an approval tier. A verdict type shaped like any one of them
+cannot express the other two.
+
+Two consequences the layout enforces rather than documents:
+
+- **The engine cannot call `os.Exit`.** It aborts a walk by panicking with a
+  private type that `Classify` recovers. Five call sites deep in a recursive walk
+  therefore need no signature changes, and no host semantics leak inward.
+- **`NotReadOnly` is the zero value.** A forgotten branch or a partially built
+  `Result` degrades to the safe answer, never to an allow.
+
+Host wire formats live in `cmd/classify-bash` (the `hook` adapter) and in the
+shims under `contrib/`, all built on the same `check` primitive.
+
 ## Why allow-only, never deny
 
-The hook only ever emits `allow`. It never emits `deny`/`ask`, and anything it
-cannot positively classify falls through (exit 0, no stdout) to Claude Code's
-normal permission prompt. The hook is an accelerator, not a gate: a bug in it can
-only *fail to speed something up*, never wave through something the normal flow
-would have stopped. This asymmetry is the whole safety argument — keep it.
+The tool only ever *adds* an allow. Anything it cannot positively classify falls
+through to the host's normal permission flow. It is an accelerator, not a gate: a
+bug in it can only *fail to speed something up*, never wave through something the
+normal flow would have stopped. This asymmetry is the whole safety argument —
+keep it.
+
+Concretely, under Claude Code's `PreToolUse` protocol **exit 2 blocks the tool**,
+so exit 2 is the one thing that can violate the asymmetry. It is reserved for the
+two cases nothing upstream can trigger: operator error at the registration site (a
+bad `--log-*` flag), and a strictness policy the operator explicitly asked to be
+loud about. Everything else — including every decode problem — fails open.
 
 ## Strict positive whitelist
 
-Every command, subcommand, and flag is enumerated positively in `commands.go`.
+Every command, subcommand, and flag is enumerated positively in
+`internal/engine/commands.go`.
 An unknown command, unknown subcommand, or unknown flag on a known command →
 fall through. We never write "allow X except when Y": a future release of some
 tool may add a state-mutating `Z` we did not anticipate, and an
@@ -130,27 +157,34 @@ wrong event or tool — **falls through**: exit 0, empty stdout, one `undecodabl
 log record. The host then applies its normal permission flow, exactly as it would
 if this hook were not installed.
 
-**An unknown field withholds the allow, and is reported.** A field the harness
-starts sending that this binary does not know decodes normally, is recorded as a
-`schema_drift` record naming it, and **suppresses the auto-approval for that
-call** — the hook exits 0 with empty stdout, so the host prompts exactly as it
-would for any unclassifiable command. It is never rejected with a nonzero exit.
+**An unknown field is reported, and by default withholds the allow.** A field the
+harness starts sending that this binary does not know decodes normally and is
+recorded as a `schema_drift` record naming it. What it then costs is the hook's
+`--on-unknown-field` policy (`cmd/classify-bash/policy.go`): under **`withhold`** —
+the legacy bare registration and `claude-lenient` — the auto-approval is suppressed
+for that call, so the hook exits 0 with empty stdout and the host prompts exactly as
+it would for any unclassifiable command. `log` classifies as if the field were
+absent, `ignore` does the same silently, and `fail` blocks (exit 2; kept only
+because the axis should exist).
 
 Two separate properties, deliberately: we will not hand out an `allow` while
 blind to part of the payload (an unknown field could in principle be one that
 changes what the command *does*), and a harness addition must never be able to
 block the Bash tool — which is precisely what the old strict decoder did, five
 times. Withholding an acceleration is a cost measured in permission prompts;
-blocking is measured in dead sessions.
+blocking is measured in dead sessions. (The fork this layout came from used `log`
+for its lenient mode, which auto-approves while blind; the 2026-10-23 merge made
+`withhold` the default on both paths.)
 
 Note the asymmetry this preserves: the hook can only ever *add* an allow, so
 degrading to "no opinion" is always safe. To silence the
 record — and restore acceleration for payloads carrying the field — add it as an
 ignored `json.RawMessage` in the right struct (a
 top-level field goes on `event`, a `tool_input` field goes on `toolInput` in
-`event.go`) and add an accept-test covering an event that carries it. No `go.mod`
-change, so the vendor hash is unaffected. The known-field sets are derived from
-the struct tags by reflection, so the struct is the single source of truth.
+`internal/adapter/claude/event.go`) and add an accept-test covering an event that
+carries it. No `go.mod` change, so the vendor hash is unaffected. The known-field
+sets are derived from the struct tags by reflection, so the struct is the single
+source of truth.
 
 **Why this reversed.** The decoder originally set `DisallowUnknownFields` as a
 deliberate tripwire: a silently-ignored field could be one that changes what the
@@ -172,26 +206,31 @@ worth keeping; putting it on the exit code was not. It now lives in the log, whe
 it costs nothing to be wrong.
 
 This also restores the contract the rest of the design rests on — a bug here can
-at worst fail to accelerate, never block. The one remaining exception is an
-unrecognized `mvdan/sh` AST node kind, which still exits 2; making that
-configurable is tracked in `FUTURE-WORK.md`.
+at worst fail to accelerate, never block. The one remaining blocking case, an
+unrecognized `mvdan/sh` AST node kind, is now a policy too: the engine aborts the
+walk (`Unparseable`) instead of exiting, and `--on-unknown-ast` decides — `fail`
+(exit 2) on the legacy path and `claude-strict`, `fallthrough` under
+`claude-lenient` and in `check`.
 
 ## Logging non-allowed commands
 
-Logging is **opt-in** and writes one JSON line per record (`log.go`). There are
-**four** `kind`s, and only the first two mean the command was not allowed:
+Logging is **opt-in** and writes one JSON line per record
+(`internal/logging/log.go`). There are **five** `kind`s:
 
 | `kind` | Meaning | Decision |
 |---|---|---|
 | `fallthrough` | No whitelist match | no `allow`; host prompts |
-| `failloud` | Bad `--log-*` flag, or unknown `mvdan/sh` AST node | exit 2, **blocks** |
-| `schema_drift` | Unknown harness field(s); `reason` names them | allow withheld → host prompts (exit 0) |
+| `failloud` | Bad `--log-*` flag, or a policy set to `fail` that fired | exit 2, **blocks** |
+| `schema_drift` | Unknown harness field(s); `reason` names them | under `withhold` (the default): allow withheld → host prompts (exit 0); under `log`: informational |
 | `undecodable` | Unusable event (malformed JSON, wrong tool, empty command) | fail open, exit 0 |
+| `deprecated_invocation` | The bare, pre-subcommand registration was used | informational; written on **every** call, allowed ones included |
 
 It exists so you can see what is failing to accelerate and notice classifier
-staleness. Note `schema_drift` is **not** a non-allowed case — classification
-proceeds unaffected; the record exists purely so a new harness field is visible
-without costing anyone a blocked call. An allowed command is never logged. Several design choices are
+staleness. A `schema_drift` record under `withhold` is usually followed by a
+`fallthrough` record for the same call — the cause, then its effect. Apart from
+`deprecated_invocation`, an allowed command is never logged, so a high
+`deprecated_invocation` count means the registration should move to
+`classify-bash hook --mode=claude-lenient`. Several design choices are
 non-obvious enough to record here.
 
 **Off by default.** The documented contract is silence on fall-through, and a log
@@ -232,7 +271,7 @@ journal sink is split by build tag: `writeJournal` lives in `journal_unix.go`
 (`//go:build !windows && !plan9`, uses `log/syslog`), with a stub in
 `journal_other.go` that returns an error on Windows/Plan9. The stub keeps the
 binary buildable everywhere; there, `auto` falls back to the file and `journal`
-drops. Everything else (`log.go`) stays portable, so the file sink works on every
+drops. Everything else (`internal/logging/log.go`) stays portable, so the file sink works on every
 platform. Keep this split if you add another OS-restricted sink.
 
 **Strictness split by failure class.** This is the one place logging touches the
@@ -313,7 +352,7 @@ The method is now code, in `triage_test.go`:
 ```bash
 journalctl -t classify-bash -o cat > /tmp/corpus.jsonl
 CORPUS=/tmp/corpus.jsonl SINCE=2026-06-12 \
-  nix develop --command go test -run TestTriage -count=1 -v .
+  nix develop --command go test -run TestTriage -count=1 -v ./internal/engine/
 ```
 
 It reports the `failloud` health check, replays every record against the current
@@ -388,7 +427,7 @@ deferred-feature table notices is unguarded.
 ## `styleAwk` and the goawk fork
 
 For `awk`, the program itself is parsed and walked: `classifyAwkProgram`
-(`awk.go`) positively whitelists every node. It rejects output redirects
+(`internal/engine/awk.go`) positively whitelists every node. It rejects output redirects
 (`>`, `>>`, `|`), `getline` from a pipe or file, `system`/`close`/`fflush`, and
 user-defined functions; the builtin allowlist is
 `length`/`substr`/`sprintf`/`tolower`/`toupper`/`gsub`/`sub`/`match`/`split`/
@@ -508,7 +547,8 @@ temporary output there, and some workspace rules *require* write-to-a-file over
 truncating a pipe — so `cmd > "$S/out.txt"` is the shape a well-behaved agent sends,
 and until now every one of them prompted. A write redirect now allows when its exact
 target (`exactPath`) is a data file directly inside the event's `scratchpad_dir`.
-The checks are the header comment of `scratch.go`; the argument:
+The checks are the header comments of `internal/engine/scratch.go` (the path rules) and
+`cmd/classify-bash/scratch.go` (the filesystem half, behind `engine.Host`); the argument:
 
 - **The directory is validated per call**, not trusted: real path, a directory we
   own, not group/world-writable, and not an ancestor of `$HOME` or the working

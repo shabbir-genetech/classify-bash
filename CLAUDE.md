@@ -6,57 +6,106 @@ Committed working preferences and learnings live in @.claude/memory.md.
 
 ## What this is
 
-`classify-bash` is a Claude Code **PreToolUse hook for the `Bash` tool**. It reads
-one hook event on stdin, parses the embedded shell command, and emits an `allow`
-permission decision **only** when the command matches a strict read-only
-whitelist; anything else falls through silently to the normal permission prompt
-(silent by default — see opt-in logging below). It is an accelerator, never a
-gate — see [README.md](README.md) for the contract and [DESIGN.md](DESIGN.md) for
-the rationale (allow-only, positive whitelist, tiers A–F, AST handling, the goawk
-fork, opt-in logging).
+`classify-bash` classifies a shell command against a strict read-only whitelist so
+an agent CLI can skip its permission prompt for commands that cannot have a side
+effect. It is an accelerator, never a gate — see [README.md](README.md) for the
+contract and [DESIGN.md](DESIGN.md) for the rationale (allow-only, positive
+whitelist, tiers A–F, AST handling, the goawk fork, opt-in logging).
+
+The classifier itself is **host-agnostic**. Host wire formats live behind
+subcommands: `check` (the primitive, and the contract every shim is built on),
+`hook` (Claude Code `PreToolUse`), `doctor`. pi and oh-my-pi are integrated
+through TypeScript shims in `contrib/` that call `check`.
 
 ## Architecture
 
-One event flows through a fixed pipeline; reading these in order is the fastest
-way to understand the whole thing:
+Package layout, chosen so the engine cannot see the host:
 
-- **`main.go`** — entry point. Resolve logging flags (`parseLogFlags`), decode the
-  event, classify the command, and print the fixed allow JSON (hand-written, no
-  `encoding/json` on the emit path) when **`shouldAllow`** says so — that is
-  `decisionAllow` *and* no schema drift, so an unknown payload field withholds
-  the allow without blocking. `shouldAllow` is split out of `main` precisely
-  because `main` has no test coverage; put decision logic there, not inline.
-  Everything else is silent exit 0. An unusable event goes through `failOpen` — logged as `undecodable`,
-  exit 0 — so a decode problem can never block a tool call. `failLoud` (exit 2)
-  survives only for a bad `--log-*` flag and an unknown AST node, and best-effort
-  logs a `failloud` record via the package-level `logCfg`/`currentCommand`.
-- **`log.go`** — opt-in, best-effort logging of the **non-allowed** cases
-  (fall-through + `failOpen` + `schema_drift` + `failLoud`). Off by default; configured by CLI flags
-  (`--log`/`--log-to`/`--log-file`) at the registration site, not by env. Two
-  failure classes with different strictness: log *writes* are swallowed (never
-  block); log *config* (flags) is validated strictly → `failLoud`. Journal sink is
-  stdlib `log/syslog` (no new dependency). See DESIGN.md "Logging non-allowed
-  commands".
-- **`journal_unix.go` / `journal_other.go`** — the `writeJournal` sink, split by
-  build tag because `log/syslog` is Unix-only. `_unix` (`!windows && !plan9`) uses
-  syslog; `_other` is a stub that errors so Windows/Plan9 still build (the file
-  sink works there, `journal` drops, `auto` falls back to file). Keep the binary
-  portable — `log.go` itself imports nothing OS-restricted.
-- **`event.go`** — tolerant JSON decode of the PreToolUse payload into
+```
+cmd/classify-bash/        CLI: dispatch, check, hook, doctor, policy, the OS Host
+internal/engine/          the classifier — no host, no JSON, no exit codes
+internal/adapter/claude/  the PreToolUse wire format
+internal/logging/         opt-in, best-effort audit log
+contrib/{omp,pi}/         agent-CLI shims (installed to $out/share)
+```
+
+The engine-cannot-see-the-host rule is a convention, not enforced by a test; the
+features that do need the host (§6's environment check, §10's filesystem checks)
+reach it only through `engine.Host`.
+
+Reading in this order is the fastest way to understand one event end to end:
+
+- **`cmd/classify-bash/main.go`** — subcommand dispatch, and the usage text. A
+  flags-only invocation with an event on stdin is routed to the legacy `hook`
+  path (`looksLikeLegacyHook`) so the binary and a host's registration never have
+  to be updated atomically. Usage errors exit **1**, never 2.
+- **`cmd/classify-bash/check.go`** — the host-agnostic entry point and the shim
+  contract: exit 0 read-only, 1 not, 2 this binary is broken or misused. Keep
+  those numbers stable; shims depend on 2 ≠ 1. It classifies with the process's
+  own environment and no scratchpad.
+- **`cmd/classify-bash/policy.go`** — the two strictness axes and the mode
+  presets. Deliberately separate from the adapter: a policy is reusable, and an
+  adapter should not smuggle one in. Unknown fields: `fail | withhold | log |
+  ignore`; **`withhold`** (log `schema_drift`, do not allow this call, never block)
+  is what `claude-lenient` and the legacy path use. `legacyStrictness` is neither
+  preset — withhold on a new field, fail on a stale classifier — and reproduces
+  exactly what the bare registration did before the merge, which is what makes
+  the compat path safe to deploy.
+- **`cmd/classify-bash/hook.go`** — the Claude Code adapter body, plus
+  `failLoud` / `failOpen` / `emitAllow` and the package-level
+  `logCfg`/`currentCommand`. The decision itself is **`shouldAllow`** (read-only
+  *and* not withheld), split out because the body reads stdin and exits; put
+  decision logic there, not inline. `failLoud` is exit 2 and therefore **blocks
+  the tool** — it is reserved for a bad `--log-*` flag and for a strictness policy
+  the operator explicitly asked to be loud about. Everything else fails open.
+- **`cmd/classify-bash/scratch.go`** + **`scratch_unix.go`/`scratch_other.go`** —
+  the OS `engine.Host` (`osHost`) and the filesystem half of scratchpad writes
+  (§10): `validScratchDir` (per-call validation of the event's `scratchpad_dir`)
+  and `scratchFileWritable` (absent, or a regular file we own with one link).
+  Ownership needs `syscall.Stat_t`, so the non-Unix build reports failure and the
+  feature is off.
+- **`cmd/classify-bash/doctor.go`** — reads the log and reports drift plus the
+  adapter's field manifest. Findings are **windowed** (`--since`): reporting an
+  append-only log in the present tense once produced a confidently false
+  "the hook is still registered with the old invocation". "Is X still true?" is
+  answered by recency (`registrationLooksStale`), never by a count.
+- **`internal/engine/api.go`** — the engine's only public surface:
+  `Classify(cmd)` and **`ClassifyWith(cmd, Host)`**, returning `Result{Class,
+  Err}`. `NotReadOnly` is the zero value so a forgotten branch degrades to the
+  safe answer; for the same reason a nil Host is `noHost`, which counts every name
+  as set (nothing binds) and has no scratchpad. The engine **must never call
+  `os.Exit`**: `failLoud` here panics with an unexported type that
+  `recoverUnknown` catches, which is how call sites deep in a recursive walk
+  abort without the engine knowing what "fail" means to a host. Non-matching
+  panics are re-panicked — a bare `recover()` would turn a real bug into a silent
+  permanent "nothing is ever read-only".
+- **`internal/logging/log.go`** — opt-in, best-effort logging of the
+  **non-allowed** cases (fall-through + `undecodable` + `schema_drift` +
+  `failloud` + `deprecated_invocation`). Off by default; configured by CLI flags
+  at the registration site, not by env. Two failure classes with different
+  strictness: log *writes* are swallowed (never block); log *config* (flags) is
+  validated strictly → `failLoud`. Journal sink is stdlib `log/syslog` (no new
+  dependency). See DESIGN.md "Logging non-allowed commands".
+- **`internal/logging/journal_unix.go` / `journal_other.go`** — the `writeJournal`
+  sink, split by build tag because `log/syslog` is Unix-only. `_unix`
+  (`!windows && !plan9`) uses syslog; `_other` is a stub that errors so
+  Windows/Plan9 still build (the file sink works there, `journal` drops, `auto`
+  falls back to file). Keep the binary portable — `log.go` itself imports nothing
+  OS-restricted.
+- **`internal/adapter/claude/event.go`** — tolerant JSON decode of the PreToolUse payload into
   `event`/`toolInput`, plus `unknownFields` for drift reporting. Only `command` is
   read; every other field is enumerated as an ignored `json.RawMessage`, and the
   known-field sets are derived from those struct tags by reflection — so the
-  struct is the single source of truth — enumerating a field silences its record
-  AND re-enables auto-allow for payloads carrying it. Name-drift is reported as
-  `schema_drift` and withholds the allow (never blocks); type-drift on ignored
-  fields stays quiet, since they are `json.RawMessage`. **Never reintroduce
-  `DisallowUnknownFields`**: `PreToolUse` exit 2 blocks the tool, so rejecting a
-  harmless new harness field takes the whole Bash tool down (it did, repeatedly —
-  see DESIGN.md "Defensive JSON contract").
-- **`classify.go`** — the shell-AST walk. `classifyCommandIn(cmd, scratch)` parses
-  with `mvdan.cc/sh/v3/syntax` and walks with a `scope` (literal bindings + the
-  validated scratchpad dir); `classifyCommand(cmd)` is the no-scratchpad form the
-  test tables and triage use. `&&`/`||`/pipe/`(subshell)` recurse — and decide which
+  struct is the single source of truth, and enumerating a field silences its
+  record AND (under `withhold`) restores auto-allow for payloads carrying it.
+  Name-drift is *reported*; what it costs is the hook policy's call. Type-drift on
+  ignored fields stays quiet. **Never reintroduce `DisallowUnknownFields`**:
+  `PreToolUse` exit 2 blocks the tool, so rejecting a harmless new harness field
+  takes the whole Bash tool down (it did, repeatedly — see DESIGN.md "Defensive
+  JSON contract").
+- **`internal/engine/classify.go`** — the shell-AST walk. `classifyCommandIn(cmd,
+  host)` parses with `mvdan.cc/sh/v3/syntax` and walks with a `scope` (literal
+  bindings + the Host). `&&`/`||`/pipe/`(subshell)` recurse — and decide which
   bindings each side sees — every other compound kind is rejected, an unknown AST
   node or binary operator calls `failLoud`. `wordLiteral` (still used for the
   command name, which must stay literal) rejects any expansion; `resolveWord` is
@@ -67,15 +116,15 @@ way to understand the whole thing:
   command. `safeRedirect` allows reads, writes to `/dev/null`, and writes of a data
   file into the scratchpad; it inspects heredoc **bodies** (an unquoted one is
   expanded by bash) and rejects `{name}>`.
-- **`vars.go`** — literal-bound variables (FUTURE-WORK §6): which assignments bind
-  (`bindAssigns`, `bindableName`), what a bound `$VAR` resolves to (`boundParam`,
-  `resolveWord`), and the stricter `exactPath` used where a path prefix is the
-  security boundary. The safety argument is its header comment.
-- **`scratch.go`** + **`scratch_unix.go`/`scratch_other.go`** — scratchpad writes
-  (§10): `validScratchDir` (per-call validation of the event's `scratchpad_dir`),
-  `scratchTargetOK` (top-level data file, no symlink/hard link). Ownership needs
-  `syscall.Stat_t`, so the non-Unix build reports failure and the feature is off.
-- **`spec.go`** — `commandSpec` + the five `flagStyle` matchers (`matchGNU`,
+- **`internal/engine/vars.go`** — literal-bound variables (FUTURE-WORK §6): which
+  assignments bind (`bindAssigns`, `bindableName` — asks the Host whether a name
+  is set), what a bound `$VAR` resolves to (`boundParam`, `resolveWord`), and the
+  stricter `exactPath` used where a path prefix is the security boundary. The
+  safety argument is its header comment.
+- **`internal/engine/scratch.go`** — the path-only half of scratchpad writes (§10):
+  top level, no dotfile, a data extension (`scratchExts`), then the Host's
+  `ScratchWritable` for the filesystem half.
+- **`internal/engine/spec.go`** — `commandSpec` + the five `flagStyle` matchers (`matchGNU`,
   `matchFind`, `matchWrapper`, `matchXargs`, `matchAwk`). This is the
   flag/subcommand/positional engine; the data it runs on lives in `commands.go`.
   `matchXargs` is the odd one out: no `--` separator (the first non-flag token is
@@ -84,13 +133,13 @@ way to understand the whole thing:
   DESIGN.md's "styleXargs and the stdin-argv hazard". The matchers take
   `[]argToken` (literal-or-substituted), so a `"$(...)"` operand reaches a spec
   only as an opaque positional, gated by the same `ArgvDataSafe` flag.
-- **`commands.go`** — the actual whitelist data: `safeCommands` maps each command
+- **`internal/engine/commands.go`** — the actual whitelist data: `safeCommands` maps each command
   name to a `commandSpec`. This is where you add/extend allowed commands. The
   `ArgvDataSafe` flag on a spec marks a command safe to receive an attacker-
   controlled argv token (from `xargs` stdin or a `$(...)` substitution); it is the
   single source of truth for that — no parallel list — set only on leaf readers
   with no write path under any argv.
-- **`awk.go`** — `classifyAwkProgram` walks an awk program's AST (via the goawk
+- **`internal/engine/awk.go`** — `classifyAwkProgram` walks an awk program's AST (via the goawk
   fork) for `styleAwk`, positively whitelisting nodes/builtins.
 
 The safety argument is structural: the hook only ever *adds* an `allow`. A bug
@@ -101,7 +150,7 @@ permission flow would have stopped. Preserve that asymmetry.
 
 ```bash
 nix develop          # dev shell: go, gopls, gotools, delve, go-licenses
-go test ./...        # the classifier corpus (TestMustAllow / TestMustNotAllow / TestEventDecode*)
+go test ./...        # every package: engine tables, adapter contract, CLI policy and §10
 go test -run TestMustNotAllow ./...   # a single test function
 nix flake check      # runs 2 checks: the corpus (checks.tests) AND a permissive-
                      # license guard (checks.licenses, go-licenses check) — MUST pass
@@ -120,10 +169,12 @@ The test corpus is the spec: `TestMustAllow` (forms that must classify allow),
 because a classifier feature isn't built — a regression here is a feature landing,
 not an incident), and `TestEventDecode*` (the JSON contract). Each case is a bare
 command string in a table — add to the right table, don't write new test
-functions. The one exception is behaviour that needs a filesystem fixture:
-`scratch_test.go` (§10, real temp directories, symlinks, hard links, a FIFO) and
-`vars_test.go`, whose `init` gives the tables an empty environment because
-`bindableName` refuses names set in the hook's environment. A new fall-through case goes in `TestMustNotAllow` *unless* you can show
+functions. The engine's tables run against `testHost` (`internal/engine/host_test.go`): an
+explicit empty environment and no scratchpad, so they never depend on the
+environment the suite runs in. The exceptions are behaviour that needs a real
+filesystem or the CLI: `cmd/classify-bash/scratch_test.go` (§10, real temp
+directories, symlinks, hard links, a FIFO) and `hook_test.go` (`shouldAllow` and
+the presets). A new fall-through case goes in `TestMustNotAllow` *unless* you can show
 it is genuinely harmless, in which case it goes in `TestNotYetAllowed`. See
 FUTURE-WORK.md "Two kinds of must not allow".
 
@@ -157,16 +208,14 @@ same rev — but local dev here is jj.)
 
 ### A second remote exists: `github.com/SBhojani/classify-bash`
 
-Same owner, and it can be **ahead** of this repo. It is where the fail-open change
-(`b6555e41`, the parent of the commit that removed `DisallowUnknownFields`) was
-authored, and as of 2026-09-10 it carries six further commits that are **not**
-here: a `cmd/` + `internal/` package split so the engine cannot see the host,
-`doctor`/`check` subcommands, packaged pi and oh-my-pi shims, and a change making
-the engine abort the classification walk instead of calling `os.Exit`.
-
-**Consumers pin THIS repo**, so a fix authored there has to be brought across.
-This is a jj repo, so the recipe is jj, not git. The remote is named `fork`, and
-`master@fork` is left **untracked** so local `master` never follows it:
+Same owner. **Both repos are maintained; neither is being retired (owner's
+decision, 2026-10-23).** They play different roles: this one is the Claude Code hook
+that consumers pin; the fork is the host-agnostic line, with `check` as its
+integration contract and pi/oh-my-pi shims. Each merges from the other when it
+wants a change, so "behind" describes what is available to merge, not a backlog
+either side owes the other. The remote is named `fork`, and `master@fork` is left
+**untracked** so local `master` never follows it. This is a jj repo, so the recipe
+is jj, not git:
 
 ```bash
 jj git remote add fork git@github.com:SBhojani/classify-bash.git   # once per clone
@@ -177,47 +226,36 @@ jj log -r '<sha>-'                   # its parent: on our history → no refacto
 jj duplicate <sha> --onto master     # jj's cherry-pick (jj ≥ 0.44 spelling; alias -d)
 ```
 
-Checking the parent is what makes this cheap — `b6555e41` cherry-picked without
-conflict precisely because it predated the refactor in fork history. **A
-cherry-pick leaves the two histories permanently diverged** (the same change now
-exists under two SHAs, so `compare` reports `diverged`, not `behind`); that is
-expected, and reconciling it is a fork-side rebase, not a problem here.
+**2026-10-23: the fork's tip (`22feb86b`) was merged into `master`.** This repo now
+has the fork's layout (`cmd/` + `internal/`), `check`/`hook`/`doctor`, the never-exit
+engine and the shims, with this repo's work carried into it rather than alongside:
+the heredoc fix, withhold-on-drift and §6/§10. Because `master` now contains the
+fork's tip as an ancestor, **the fork can take everything here as a fast-forward**.
+How the conflicts were resolved, for whoever merges next in either direction:
 
-**Both repos are maintained; neither is being retired (owner's decision, 2026-10-23).**
-They play different roles: this one is the Claude Code hook that consumers pin; the
-fork is the host-agnostic line, with `check` as its integration contract and
-pi/oh-my-pi shims. Each merges from the other when it wants a change, so "behind" below
-describes what is available to merge, not a backlog either side owes the other.
-
-**The flow runs both ways, and the fork is behind on safety.** On 2026-10-23 the
-fork (last push 2026-09-07) lacked `fb5978c` (withhold the allow on schema drift —
-its `claude-lenient`/`claude-strict` modes are classify-anyway and block, with no
-withhold), `0751c71` (unquoted heredoc bodies — as published it auto-approves
-`cat <<EOF` around `$(cmd)`), and §6/§10. Re-count with the two `jj log` lines
-above rather than trusting a number here. Bringing its refactor across is not a
-cherry-pick: every file moved, and its "engine cannot see the host" rule meets §10's
-filesystem checks and §6's environment check head on. **A plain merge does not
-help** — tried 2026-10-23 with `jj new master master@fork` (then abandoned): 10
-conflicted paths, 6 of them modify/delete (`classify.go`, `main.go`, `event.go`,
-`log.go`, two test files) because jj does not follow renames, and the merged tree
-holds *two* classifiers — the fork's `internal/engine/classify.go`, which its `cmd/`
-binary builds, without the heredoc fix or §6/§10, and ours at the root in a
-`package main` whose `main.go` the fork deleted. Taking the fork's side of each
-conflict silently reverts the safety work. A sync would **not** force consumers to
-re-register: the fork honours the bare flags-only invocation on a piped stdin as
-the legacy hook (`looksLikeLegacyHook`), at the cost of a `deprecated_invocation`
-log record on every call and log-and-allow drift handling (no withhold). The parts worth porting on
-their own are `check` (classify a command without a hook payload — the integration
-contract for other hosts), `--on-unknown-ast=fallthrough` (removes the last
-blocking path, FUTURE-WORK's open `failLoud` item), the never-exit engine that
-makes it possible (`failLoud` panics, `Classify` recovers it into an `Unparseable`
-result, and only the CLI decides whether that blocks — `internal/engine/api.go`),
-and possibly `doctor` (a windowed health report over the log that states old
-records as history). The fork's README and `cmd/classify-bash/` are the
-description of all four; read the code, not the commit titles — a summary
-from titles alone got the registration question above wrong. Going the other way, `0751c71`
-is the change the fork most needs: it touches only `classify.go`, which the refactor
-moved but barely changed.
+- **A plain resolution reverts the safety work.** jj does not follow renames, so
+  the fork's `classify.go` → `internal/engine/classify.go` move came back as
+  modify/delete conflicts, and the merged tree briefly held *two* classifiers: the
+  fork's, which its binary builds, without the heredoc fix or §6/§10, and ours at
+  the root. Taking the fork's side of each conflict would have shipped the
+  heredoc hole again. The fix was to delete the root copies and put our versions
+  of `classify.go`/`vars.go` and their tests into `internal/engine/`.
+- **The host boundary was kept, not broken.** §6's environment check and §10's
+  filesystem checks go through `engine.Host`; the OS implementation (`osHost`) is
+  in `cmd/classify-bash/scratch.go`, and a nil Host is conservative (`noHost`).
+- **Policy semantics were reconciled toward the safer side.** The fork's unknown-
+  field values were `fail | log | ignore`; `withhold` was added and made the value
+  of both the legacy path (so the bare registration behaves exactly as before) and
+  `claude-lenient` (the fork's `log` auto-approved while blind to the payload).
+  `doctor` and the deprecation record now recommend `claude-lenient`, not
+  `claude-strict`, which blocks every call on a new harness field.
+- **Identical code was not a conflict in substance.** The adapter's `event.go` and
+  `logging/log.go` matched ours line for line apart from comments — the fork's
+  `b6555e41` and our `e29c01f` are the same change — so the root copies were simply
+  dropped.
+- **Verified after:** every table passes in its new home, cross-compiles, and the
+  mutation pass over all 30 safety checks — including the new Host, withhold and
+  preset decisions — kills every mutant from a safety test, none by a compile error.
 
 ## Conventions
 
@@ -252,19 +290,22 @@ moved but barely changed.
   parsing, rest is opaque data, so `cat file -X` allows `-X` as data), which is only
   sound when it has no flag-reachable side effect at all. So never set `ArgvDataSafe`
   on a spec with such a path. See README "Extending the whitelist" and `matchGNU`.
-- **Non-blocking JSON decoder** (`event.go`). When the harness starts sending a
-  new field on the event or inside `tool_input`, the event decodes, a
-  `schema_drift` record names it, and **the allow is withheld for that call** —
+- **Non-blocking JSON decoder** (`internal/adapter/claude/event.go`). When the
+  harness starts sending a new field on the event or inside `tool_input`, the event
+  decodes, a `schema_drift` record names it, and under the `withhold` policy (the
+  legacy path and `claude-lenient`) **the allow is withheld for that call** —
   exit 0, host prompts. Enumerate it as an ignored `json.RawMessage` on the right
   struct (`event` for top-level, `toolInput` for a `tool_input` field) + an
   accept-test; that both silences the record and restores acceleration. **Do NOT
-  make this reject (nonzero exit) again** — withholding an allow costs prompts,
-  rejecting costs dead sessions. See DESIGN.md.
-- **Fail loud on the unknown, but only where nothing upstream can trigger it**: an
-  unrecognized `mvdan/sh` AST node, redirect op, or flag style calls `failLoud`
-  (exit 2) rather than guessing — we'd rather block than ship a stale classifier.
-  Keep new `switch` defaults loud. Harness-driven input is the opposite case: it
-  fails open, because there we cannot afford to block.
+  make this reject (nonzero exit) by default again** — withholding an allow costs
+  prompts, rejecting costs dead sessions. See DESIGN.md.
+- **Abort on the unknown; let the policy decide whether that blocks.** An
+  unrecognized `mvdan/sh` AST node, redirect op, binary operator or flag style
+  calls the engine's `failLoud`, which aborts the walk (`Unparseable`) rather than
+  guessing. Keep new `switch` defaults loud. Whether an abort blocks is the hook's
+  `--on-unknown-ast`: `fail` (exit 2) on the legacy path and `claude-strict`,
+  `fallthrough` under `claude-lenient` and in `check`. Harness-driven input is the
+  opposite case: it fails open, because there we cannot afford to block.
 - **LF line endings** enforced via `.gitattributes` (`*.go`/`*.nix`/`*.md`). CRLF
   breaks the inline shell in `flake.nix`'s checks.
 - No AI attribution in commit messages.
@@ -283,9 +324,20 @@ is ever rewritten.
 
 ## How it's deployed
 
-The binary is installed onto `$PATH` and registered by bare name `classify-bash`
-in `~/.claude/settings.json`. One known consumer is an external NixOS config that
-pulls this repo as a `git+ssh` flake input — so **a change here only reaches that
-consumer after a commit + push**, then the consumer re-locks
-(`nix flake lock --update-input classify-bash`) and rebuilds. A long-lived
-`claude` session picks up the rebuilt hook on its next tool call.
+The binary is installed onto `$PATH` and registered in `~/.claude/settings.json`.
+One known consumer is an external NixOS config that pulls this repo as a `github:`
+flake input — so **a change here only reaches that consumer after a commit +
+push**, then the consumer re-locks (`nix flake update classify-bash`) and rebuilds.
+A long-lived `claude` session picks up the rebuilt hook on its next tool call.
+
+**Registration form.** The recommended line is
+`classify-bash hook --mode=claude-lenient --log --log-to=auto`. The bare
+pre-subcommand form (`classify-bash --log --log-to=auto`) still works through the
+legacy path and behaves exactly as before the 2026-10-23 merge, but with logging on
+it writes a `deprecated_invocation` record on **every** call. **Switching order is not
+critical for this change** (checked 2026-10-23): the pre-merge binary parses only
+`--log*` flags and ignores `hook` and `--mode=…`, so it keeps classifying under the
+new line. Deploying the binary first is still the habit — the general trap is a
+*`--log*`* flag an old binary does not know, which it rejects with exit 2. Consumers that invoke the binary with no flags
+at all (an adapter that pipes it a payload) also take the legacy path, with logging
+off, so they need no change.

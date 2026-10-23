@@ -1,7 +1,6 @@
-package main
+package engine
 
 import (
-	"os"
 	"strings"
 
 	"mvdan.cc/sh/v3/syntax"
@@ -22,16 +21,14 @@ import (
 //     assigning it changes the environment of every later child process —
 //     `HOME=… ; git log` reads another ~/.gitconfig, whose pager is a program.
 //     So only short scratch names are bindable (bindableName): 1–3 characters,
-//     a few shell-meaningful ones reserved, and never a name present in the
-//     hook's own environment (which the Bash tool's shell inherits).
+//     a few shell-meaningful ones reserved, and never a name the Host reports
+//     as set in the environment the command will run in. With no Host, every
+//     name counts as set, so nothing binds.
 //
 // Nothing else in the whitelist can assign a variable: printf has no -v,
 // read/mapfile/declare/export/eval are not whitelisted, and `{name}>` redirects
 // are rejected in safeRedirect. So the scope is exact for every command that
 // can classify Allow.
-
-// envLookup is os.LookupEnv, replaceable in tests.
-var envLookup = os.LookupEnv
 
 // reservedNames are short names bash or common tools give meaning to.
 var reservedNames = map[string]bool{
@@ -43,7 +40,7 @@ var reservedNames = map[string]bool{
 // bindableName is a positive rule, not a deny-list: what agents actually bind
 // is overwhelmingly one to three characters (S, D, OUT, SP, W, …), and the
 // names that steer programs (PATH, HOME, PAGER, GIT_*, LD_*) are all longer.
-func bindableName(n string) bool {
+func bindableName(n string, h Host) bool {
 	if len(n) < 1 || len(n) > 3 || n == "_" || reservedNames[n] {
 		return false
 	}
@@ -55,7 +52,7 @@ func bindableName(n string) bool {
 			return false
 		}
 	}
-	if _, set := envLookup(n); set {
+	if h.EnvSet(n) {
 		return false
 	}
 	return true
@@ -71,7 +68,7 @@ func bindAssigns(st *syntax.Stmt, call *syntax.CallExpr, sc *scope) bool {
 		if a.Append || a.Naked || a.Index != nil || a.Array != nil || a.Name == nil {
 			return false
 		}
-		if !bindableName(a.Name.Value) {
+		if !bindableName(a.Name.Value, sc.host) {
 			return false
 		}
 		v := ""

@@ -1,4 +1,4 @@
-package main
+package engine
 
 import (
 	"strings"
@@ -16,40 +16,35 @@ const (
 
 // scope is the shell state the classifier tracks while it walks one command:
 // the variables bound to a literal earlier in the same command (FUTURE-WORK §6),
-// and the session's validated scratchpad directory (§10), or "" when the
-// scratchpad feature is off. A bound `$VAR` is replaced by its literal, so every
-// later check sees exactly the string bash would.
+// and the Host, which answers what the engine may not look up itself (is a
+// name set in the environment, is there a scratchpad, §10). A bound `$VAR` is
+// replaced by its literal, so every later check sees exactly the string bash
+// would.
 type scope struct {
-	vars    map[string]string
-	scratch string
+	vars map[string]string
+	host Host
 }
 
-func newScope(scratch string) *scope {
-	return &scope{vars: map[string]string{}, scratch: scratch}
+func newScope(h Host) *scope {
+	return &scope{vars: map[string]string{}, host: h}
 }
 
 // child copies the bindings for a construct bash runs in a subshell or runs
 // conditionally: it sees what is bound now, and nothing it binds escapes.
 func (s *scope) child() *scope {
-	c := &scope{vars: make(map[string]string, len(s.vars)), scratch: s.scratch}
+	c := &scope{vars: make(map[string]string, len(s.vars)), host: s.host}
 	for k, v := range s.vars {
 		c.vars[k] = v
 	}
 	return c
 }
 
-// classifyCommand classifies cmd with no scratchpad: the form the test corpus
-// and the triage replay use.
-func classifyCommand(cmd string) decision {
-	return classifyCommandIn(cmd, "")
-}
-
 // classifyCommandIn parses cmd as bash and returns decisionAllow only when every
 // statement, every nested construct, every redirect, every word, and every flag
 // matches an entry in our strict whitelist. Any uncertainty returns
 // decisionFallThrough. Unrecognized mvdan/sh AST node kinds call failLoud.
-// scratch is a scratchpad directory already validated by validScratchDir, or "".
-func classifyCommandIn(cmd, scratch string) decision {
+// h must be non-nil (ClassifyWith substitutes noHost).
+func classifyCommandIn(cmd string, h Host) decision {
 	r := strings.NewReader(cmd)
 	f, err := syntax.NewParser().Parse(r, "")
 	if err != nil {
@@ -62,7 +57,7 @@ func classifyCommandIn(cmd, scratch string) decision {
 	if onlyAssignments(f.Stmts) {
 		return decisionFallThrough
 	}
-	if classifyStmts(f.Stmts, newScope(scratch)) {
+	if classifyStmts(f.Stmts, newScope(h)) {
 		return decisionAllow
 	}
 	return decisionFallThrough
@@ -199,7 +194,7 @@ func classifyCall(c *syntax.CallExpr, sc *scope) bool {
 
 // safeRedirect returns true for redirects that cannot cause a write, that
 // write only to /dev/null (observationally inert), or that write a data file
-// in the session's scratchpad (§10, see scratchTargetOK).
+// in the session's scratchpad (§10, see scratchWriteOK).
 func safeRedirect(r *syntax.Redirect, sc *scope) bool {
 	if r == nil || r.Word == nil {
 		return false
@@ -224,7 +219,7 @@ func safeRedirect(r *syntax.Redirect, sc *scope) bool {
 		// The scratchpad check needs the path bash will really open, so it
 		// re-resolves the word under the stricter exactPath rules.
 		path, ok := exactPath(r.Word, sc)
-		return ok && sc.scratch != "" && scratchTargetOK(sc.scratch, path)
+		return ok && scratchWriteOK(path, sc.host)
 	case syntax.RdrInOut:
 		// `<>` opens read-write without truncating; nothing needs it.
 		return target == "/dev/null"

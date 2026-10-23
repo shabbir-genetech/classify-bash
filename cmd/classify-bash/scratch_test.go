@@ -9,6 +9,8 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+
+	"github.com/shabbir-genetech/classify-bash/internal/engine"
 )
 
 // scratchFixture makes a private scratchpad directory and returns its real path.
@@ -136,7 +138,7 @@ func TestScratchRedirectAllow(t *testing.T) {
 		`S=DIR; F="$S/x.md"; cat a > "$F"`,
 	} {
 		c = strings.ReplaceAll(c, "DIR", dir)
-		if got := classifyCommandIn(c, dir); got != decisionAllow {
+		if got := classifyIn(c, dir); got != engine.ReadOnly {
 			t.Errorf("classifyCommandIn(%q) = %v, want Allow", c, got)
 		}
 	}
@@ -193,13 +195,13 @@ func TestScratchRedirectNotAllow(t *testing.T) {
 		`echo "$(S=DIR)"; grep -n foo f > "$S/o.txt"`,
 	} {
 		c = strings.ReplaceAll(c, "DIR", dir)
-		if got := classifyCommandIn(c, dir); got != decisionFallThrough {
+		if got := classifyIn(c, dir); got != engine.NotReadOnly {
 			t.Errorf("classifyCommandIn(%q) = %v, want FallThrough", c, got)
 		}
 	}
 	// Without a validated scratchpad, nothing changes.
 	c := "grep -n foo f > " + dir + "/out.txt"
-	if got := classifyCommandIn(c, ""); got != decisionFallThrough {
+	if got := classifyIn(c, ""); got != engine.NotReadOnly {
 		t.Errorf("classifyCommandIn(%q, \"\") = %v, want FallThrough", c, got)
 	}
 }

@@ -27,7 +27,7 @@ README.md — this file is for how we work, not what the code is.)
   ```bash
   journalctl -t classify-bash -o cat > /tmp/corpus.jsonl
   CORPUS=/tmp/corpus.jsonl SINCE=<date commands.go last changed> \
-    nix develop --command go test -run TestTriage -count=1 -v .
+    nix develop --command go test -run TestTriage -count=1 -v ./internal/engine/
   ```
 
   It calls `classifyCommand`/`safeCommands` directly, so its verdicts are the
