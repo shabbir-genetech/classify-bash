@@ -351,6 +351,15 @@ func TestMustAllow(t *testing.T) {
 		"gh api /repos/o/r/branches/main --jq .commit.sha",
 		"gh repo view -R o/r --json name",
 		"gh repo view --repo=my-org/my.repo_1",
+		"gh pr view 123",
+		"gh pr view '#123' -R o/r --json title,body -q .title",
+		"gh pr view feature/x --comments",
+		"gh pr view", // the current branch's PR
+		"gh pr diff 12 --name-only -R o/r",
+		"gh pr diff 12 --color=never -e '*.lock'",
+		"gh pr list -R o/r --state merged -L 5 --json number,title",
+		"gh pr list --search 'is:open review:required' --author @me",
+		"gh pr checks 7 -R o/r --required",
 
 		// §8 permutation guard: a *whitelisted* flag after a positional still allows
 		// (no regression for the common "flag after a revision/arg" idiom).
@@ -779,6 +788,26 @@ func TestMustNotAllow(t *testing.T) {
 		"gh api //gh.example/x",                // parsed host, refused defensively
 		"gh api 'repos/o/r?x=\\@gh.example'",   // outside the character set
 		"gh repo view \"$(echo o/r)\"",         // an unseen positional is never checked, so refused
+		// gh pr: browser launches, host-naming selectors, mutating siblings.
+		"gh pr view 1 --web",
+		"gh pr view 1 -R o/r -w",
+		"gh pr diff 1 --web",
+		"gh pr list --web",
+		"gh pr checks 1 --web",
+		"gh pr view https://gh.example/o/r/pull/1",
+		"gh pr view HTTPS://gh.example/o/r/pull/1",
+		"gh pr diff https://gh.example/o/r/pull/1",
+		"gh pr checks https://gh.example/o/r/pull/1",
+		"gh pr diff 1 -R gh.example/o/r",
+		"gh pr list --repo=git@gh.example:o/r",
+		"gh pr checks \"$(echo 1)\"",
+		"gh pr checkout 1",
+		"gh pr comment 1 -b x",
+		"gh pr edit 1 --title x",
+		"gh pr close 1",
+		"gh pr review 1 --approve",
+		"gh pr ready 1",
+		"gh pr diff 1 --allow-escape-sequences",
 
 		// Unquoted heredoc bodies are EXPANDED by bash: these ran arbitrary commands
 		// and classified Allow until 2026-10-23 (the body was never inspected).
@@ -899,9 +928,13 @@ func TestNotYetAllowed(t *testing.T) {
 		// gh endpoints outside the defensive character set: harmless, but a form
 		// the host check did not anticipate is refused rather than reasoned about.
 		"gh api 'search/issues?q=a%20b'",
-		// gh read subcommands not in the whitelisted set (pr/issue not added yet).
-		"gh pr view 123",
+		// gh read subcommands not in the whitelisted set (issue not added yet).
 		"gh issue list",
+		// gh pr checks --watch: read-only but never terminates (excluded).
+		"gh pr checks 1 --watch",
+		// Option values outside their documented set: harmless, still refused.
+		"gh pr diff 1 --color=sometimes",
+		"gh pr list --limit 5x",
 
 		// §6 scoping is conservative where bash's own outcome is harmless: a
 		// binding never escapes the construct that made it, even when bash

@@ -2426,6 +2426,7 @@ func ghSpec() *commandSpec {
 			"auth": ghAuthSpec(),
 			"repo": ghRepoSpec(),
 			"api":  ghApiSpec(),
+			"pr":   ghPRSpec(),
 		},
 	}
 }
@@ -2477,14 +2478,89 @@ func ghRepoViewSpec() *commandSpec {
 		Style:              styleGNU,
 		AllowAnyPositional: true,
 		Positional:         ghRepoName,
-		Flags: []flagSpec{
-			{Long: "json", TakesArg: true},
-			{Short: "q", Long: "jq", TakesArg: true},
-			{Short: "t", Long: "template", TakesArg: true},
-			{Short: "b", Long: "branch", TakesArg: true},
-			{Short: "R", Long: "repo", TakesArg: true, Value: ghRepoName},
-			{Long: "help"},
+		Flags: flagSet(ghRepoScopedFlags(), ghFormatFlags(),
+			flags(flagSpec{Short: "b", Long: "branch", TakesArg: true})),
+	}
+}
+
+// Flag groups shared by gh's read subcommands, composed with flagSet.
+
+// ghRepoScopedFlags are -R/--repo, checked so it cannot name a host
+// (ghvalues.go), and --help.
+func ghRepoScopedFlags() []flagSpec {
+	return flags(
+		flagSpec{Short: "R", Long: "repo", TakesArg: true, Value: ghRepoName},
+		flagSpec{Long: "help"},
+	)
+}
+
+// ghFilterFlags are gh's output filters. --jq can read $ENV, which discloses no
+// more than the whitelisted printenv; --template is gh's Go template, data only.
+func ghFilterFlags() []flagSpec {
+	return flags(
+		flagSpec{Short: "q", Long: "jq", TakesArg: true},
+		flagSpec{Short: "t", Long: "template", TakesArg: true},
+	)
+}
+
+// ghFormatFlags are --json plus the filters, for subcommands with JSON output.
+func ghFormatFlags() []flagSpec {
+	return flagSet(flags(flagSpec{Long: "json", TakesArg: true}), ghFilterFlags())
+}
+
+// ghPRSpec whitelists the read-only `gh pr view|diff|list|checks` (flags from gh
+// 2.102's help). The mutating siblings — create, merge, edit, close, reopen,
+// comment, review, ready, checkout, lock, unlock, update-branch, revert — are
+// absent. NOT ArgvDataSafe. A PR selector or -R repository that names a host sent
+// credentials there (ghvalues.go), so both are checked by value.
+//
+// Deliberately excluded, by kind:
+//   - -w/--web on every subcommand: launches a browser (exec side effect).
+//   - checks --watch, and -i/--interval and --fail-fast, which only apply to it:
+//     never terminates (the journalctl -f precedent, TestNotYetAllowed).
+//   - diff --allow-escape-sequences: passes terminal escape sequences through;
+//     no logged demand, refused defensively.
+func ghPRSpec() *commandSpec {
+	return &commandSpec{
+		Style: styleGNU,
+		Subcommands: map[string]*commandSpec{
+			"view": ghPRSelected(ghFormatFlags(), flags(flagSpec{Short: "c", Long: "comments"})),
+			"diff": ghPRSelected(flags(
+				flagSpec{Long: "color", TakesArg: true, Value: oneOf("always", "never", "auto")},
+				flagSpec{Short: "e", Long: "exclude", TakesArg: true},
+				flagSpec{Long: "name-only"},
+				flagSpec{Long: "patch"},
+			)),
+			"checks": ghPRSelected(ghFormatFlags(), flags(flagSpec{Long: "required"})),
+			"list": {
+				Style: styleGNU,
+				Flags: flagSet(ghRepoScopedFlags(), ghFormatFlags(), flags(
+					flagSpec{Long: "app", TakesArg: true},
+					flagSpec{Short: "a", Long: "assignee", TakesArg: true},
+					flagSpec{Short: "A", Long: "author", TakesArg: true},
+					flagSpec{Short: "B", Long: "base", TakesArg: true},
+					flagSpec{Short: "d", Long: "draft"},
+					flagSpec{Short: "H", Long: "head", TakesArg: true},
+					flagSpec{Short: "l", Long: "label", TakesArg: true},
+					flagSpec{Short: "L", Long: "limit", TakesArg: true, Value: allDigits},
+					flagSpec{Short: "S", Long: "search", TakesArg: true},
+					flagSpec{Short: "s", Long: "state", TakesArg: true, Value: oneOf("open", "closed", "merged", "all")},
+				)),
+			},
 		},
+	}
+}
+
+// ghPRSelected is a `gh pr` subcommand that takes an optional PR selector: the
+// selector is checked by value (ghPRSelector), -R as everywhere, plus the
+// subcommand's own flag groups. Building every such leaf here means a new one
+// cannot forget the selector check.
+func ghPRSelected(groups ...[]flagSpec) *commandSpec {
+	return &commandSpec{
+		Style:              styleGNU,
+		AllowAnyPositional: true,
+		Positional:         ghPRSelector,
+		Flags:              flagSet(append([][]flagSpec{ghRepoScopedFlags()}, groups...)...),
 	}
 }
 
@@ -2501,21 +2577,18 @@ func ghRepoViewSpec() *commandSpec {
 // `Authorization: token …` to that host (GH_DEBUG=api, an unresolvable .invalid
 // host, so nothing left the machine). Without a token it is still an outbound GET
 // to a caller-chosen host and path, which is curl's job, and curl is not listed.
-// --jq can read $ENV, which discloses no more than the whitelisted printenv;
-// --template is gh's Go template, data only.
+// An absolute-URL endpoint does the same, so the endpoint is checked by value.
 func ghApiSpec() *commandSpec {
 	return &commandSpec{
 		Style:              styleGNU,
 		AllowAnyPositional: true,
 		Positional:         ghEndpoint,
-		Flags: []flagSpec{
-			{Long: "cache", TakesArg: true},
-			{Long: "paginate"},
-			{Short: "q", Long: "jq", TakesArg: true},
-			{Short: "t", Long: "template", TakesArg: true},
-			{Short: "i", Long: "include"},
-			{Long: "slurp"},
-			{Long: "help"},
-		},
+		Flags: flagSet(ghFilterFlags(), flags(
+			flagSpec{Long: "cache", TakesArg: true},
+			flagSpec{Long: "paginate"},
+			flagSpec{Short: "i", Long: "include"},
+			flagSpec{Long: "slurp"},
+			flagSpec{Long: "help"},
+		)),
 	}
 }

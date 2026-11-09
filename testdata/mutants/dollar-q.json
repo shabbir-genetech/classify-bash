@@ -1,0 +1,55 @@
+[
+ {
+  "name": "$?: Exp",
+  "file": "internal/engine/vars.go",
+  "old": "p.Names == 0 && p.Exp == nil\n}",
+  "new": "p.Names == 0 && true\n}",
+  "expect": "killed"
+ },
+ {
+  "name": "$?: Repl",
+  "file": "internal/engine/vars.go",
+  "old": "p.Slice == nil && p.Repl == nil && p.Names",
+  "new": "p.Slice == nil && true && p.Names",
+  "expect": "killed"
+ },
+ {
+  "name": "$?: Slice",
+  "file": "internal/engine/vars.go",
+  "old": "p.Index == nil && p.Slice == nil && p.Repl == nil && p.Names",
+  "new": "p.Index == nil && true && p.Repl == nil && p.Names",
+  "expect": "killed"
+ },
+ {
+  "name": "$?: Index",
+  "file": "internal/engine/vars.go",
+  "old": "\t\tp.Index == nil && p.Slice == nil && p.Repl == nil && p.Names == 0 && p.Exp == nil\n}",
+  "new": "\t\ttrue && p.Slice == nil && p.Repl == nil && p.Names == 0 && p.Exp == nil\n}",
+  "expect": "survives",
+  "why": "mvdan/sh refuses to parse an indexed special parameter, so the command never classifies"
+ },
+ {
+  "name": "$?: Excl",
+  "file": "internal/engine/vars.go",
+  "old": "\t\t!p.Excl && !p.Length && !p.Width &&",
+  "new": "\t\ttrue && !p.Length && !p.Width &&",
+  "expect": "killed",
+  "run": "TestNotYetAllowed"
+ },
+ {
+  "name": "$?: Length",
+  "file": "internal/engine/vars.go",
+  "old": "\t\t!p.Excl && !p.Length && !p.Width &&",
+  "new": "\t\t!p.Excl && true && !p.Width &&",
+  "expect": "killed",
+  "run": "TestNotYetAllowed"
+ },
+ {
+  "name": "$?: name is ?",
+  "file": "internal/engine/vars.go",
+  "old": "p.Param.Value == \"?\" &&",
+  "new": "p.Param.Value != \"\" &&",
+  "expect": "killed",
+  "run": "TestNotYetAllowed"
+ }
+]

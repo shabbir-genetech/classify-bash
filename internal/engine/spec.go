@@ -72,6 +72,20 @@ func (f flagSpec) valueOK(v string) bool {
 	return f.Value == nil || f.Value(v)
 }
 
+// flagSet composes a spec's flags from reusable groups into a fresh slice. Each
+// call copies, so no spec shares a backing array with another — an append to one
+// spec's flags can never appear in a sibling's.
+func flagSet(groups ...[]flagSpec) []flagSpec {
+	var out []flagSpec
+	for _, g := range groups {
+		out = append(out, g...)
+	}
+	return out
+}
+
+// flags is one-off flags as a group, for flagSet.
+func flags(fs ...flagSpec) []flagSpec { return fs }
+
 // isSignedInt reports whether tok is a bare signed integer like "-1" or "+2".
 // Used only by DashValueOK; see the field comment for why it is this strict.
 func isSignedInt(tok string) bool {

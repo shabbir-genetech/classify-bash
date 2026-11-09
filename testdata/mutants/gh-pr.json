@@ -1,0 +1,46 @@
+[
+ {
+  "name": "pr selected leaf: selector checked",
+  "file": "internal/engine/commands.go",
+  "old": "\t\tPositional:         ghPRSelector,\n",
+  "new": "\t\tPositional:         nil,\n",
+  "expect": "killed"
+ },
+ {
+  "name": "pr: --web re-added",
+  "file": "internal/engine/commands.go",
+  "old": "ghPRSelected(ghFormatFlags(), flags(flagSpec{Short: \"c\", Long: \"comments\"}))",
+  "new": "ghPRSelected(ghFormatFlags(), flags(flagSpec{Short: \"c\", Long: \"comments\"}, flagSpec{Short: \"w\", Long: \"web\"}))",
+  "expect": "killed"
+ },
+ {
+  "name": "pr: checkout re-added",
+  "file": "internal/engine/commands.go",
+  "old": "\t\t\t\"checks\": ghPRSelected(",
+  "new": "\t\t\t\"checkout\": ghPRSelected(),\n\t\t\t\"checks\": ghPRSelected(",
+  "expect": "killed"
+ },
+ {
+  "name": "pr: escape sequences re-added",
+  "file": "internal/engine/commands.go",
+  "old": "\t\t\t\tflagSpec{Long: \"patch\"},\n\t\t\t)),",
+  "new": "\t\t\t\tflagSpec{Long: \"patch\"},\n\t\t\t\tflagSpec{Long: \"allow-escape-sequences\"},\n\t\t\t)),",
+  "expect": "killed"
+ },
+ {
+  "name": "selector: character set",
+  "file": "internal/engine/ghvalues.go",
+  "old": "var ghPRSelector = allOf(nonEmpty, runesIn(\"-_./#+\"), notURL)",
+  "new": "var ghPRSelector = allOf(nonEmpty, notURL)",
+  "expect": "survives",
+  "why": "a URL selector is still refused by notURL; both layers must go for a host to get through"
+ },
+ {
+  "name": "selector: parser",
+  "file": "internal/engine/ghvalues.go",
+  "old": "var ghPRSelector = allOf(nonEmpty, runesIn(\"-_./#+\"), notURL)",
+  "new": "var ghPRSelector = allOf(nonEmpty, runesIn(\"-_./#+\"))",
+  "expect": "survives",
+  "why": "a URL selector needs ':', which the character set refuses first"
+ }
+]

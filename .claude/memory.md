@@ -14,6 +14,12 @@ README.md — this file is for how we work, not what the code is.)
   structural test where a field could be set but never consulted
   (`TestSpecInvariants`). A mutation survivor that is a deliberate second lock is
   fine; say which lock covers it.
+- **Reusable, composable, DRY (owner, 2026-11-09).** Build specs from shared flag
+  groups (`flagSet`, `flags`, e.g. `ghRepoScopedFlags()`), value checks from
+  combinators (`values.go`: `allOf`, `runesIn`, `oneOf`, `notURL`), and repeated
+  leaf shapes from one constructor (`ghPRSelected`), so a new subcommand cannot
+  forget a check. Tooling that a second pass would rewrite gets committed instead
+  (`scripts/mutate.go` + `testdata/mutants/`).
 - **Prefer a parser to a regex where feasible (owner, 2026-11-09).** Decide what a
   value *is* by parsing it the way the consuming tool does — `net/url` for a gh
   endpoint, `mvdan/sh` for a command, goawk for an awk program — rather than by
@@ -78,11 +84,14 @@ README.md — this file is for how we work, not what the code is.)
   Man pages describe intent; the marker file reports behaviour. Corollary: give
   the probe script a non-blocking body (`touch marker` and exit) — an `exec cat`
   tail once hung a `sort --compress-program` probe for two minutes.
-- **Mutation-test a new safety check before trusting a green suite.** Disable each
-  check in turn in a scratch copy (a list of old→new string substitutions and a
-  loop over `go test`), require a failure, and run the loop against the safety
-  tables only (`-run 'TestMustNotAllow|TestScratch…'`): a check killed only by
-  `TestNotYetAllowed` is unguarded. The 2026-10-23 pass found two survivors and
+- **Mutation-test a new safety check before trusting a green suite.** Add its
+  mutants to `testdata/mutants/<feature>.json` and run
+  `go run scripts/mutate.go testdata/mutants/*.json` (the file format and rules are
+  the script's header). Each mutant disables one check in a scratch copy and must
+  be killed by the safety tables (`TestMustNotAllow|TestSpecInvariants` by
+  default): a check killed only by `TestNotYetAllowed` is unguarded, unless its
+  refusal is harmless-but-unsupported, which a `"run"` override states. A
+  deliberate second lock is `"expect": "survives"` with a `"why"`. The 2026-10-23 pass found two survivors and
   three wall gaps this way. See DESIGN.md "AST handling". **A kill must come from a
   test, not the compiler:** deleting a condition can leave a variable unused (`links`,
   a loop's `p`), Go refuses to build, and the mutant reads as killed. Check that the

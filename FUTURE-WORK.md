@@ -414,6 +414,7 @@ Shipped in two steps: `journalctl` (flag forms) + `gh auth status` first; then
 | `gh auth status` | ✅ |
 | `gh repo view` | ✅ (via §8) |
 | `gh api` (GET-only) | ✅ (via §8) |
+| `gh pr view/diff/list/checks` | ✅ (2026-11-09; selector and `-R` checked by value, §9) |
 
 Whitelist-only throughout: dangerous modes are left *off* the whitelist (they fall
 through by default) and recorded in `// deliberately excluded` comments, never as a

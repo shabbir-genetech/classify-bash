@@ -102,15 +102,6 @@ func claudeScratchIn(s string) string {
 	return "/" + strings.Join(parts[:5], "/")
 }
 
-func allDigits(s string) bool {
-	for _, r := range s {
-		if r < '0' || r > '9' {
-			return false
-		}
-	}
-	return s != ""
-}
-
 // isUUID checks the 8-4-4-4-12 lowercase-hex shape of a session id.
 func isUUID(s string) bool {
 	if len(s) != 36 {

@@ -1,0 +1,132 @@
+[
+ {
+  "name": "Value: --f=v",
+  "file": "internal/engine/spec.go",
+  "old": "if !f.valueOK(arg[2+len(name)+1:]) {",
+  "new": "if !f.valueOK(arg[2+len(name)+1:]) && false {",
+  "expect": "killed"
+ },
+ {
+  "name": "Value: --f v",
+  "file": "internal/engine/spec.go",
+  "old": "if !f.valueOK(args[i+1].lit) {\n\t\t\t\t\t\treturn false\n\t\t\t\t\t}\n\t\t\t\t\ti++ // consume required value",
+  "new": "if !f.valueOK(args[i+1].lit) && false {\n\t\t\t\t\t\treturn false\n\t\t\t\t\t}\n\t\t\t\t\ti++ // consume required value",
+  "expect": "killed"
+ },
+ {
+  "name": "Value: -fv",
+  "file": "internal/engine/spec.go",
+  "old": "if !f.valueOK(cluster[j+1:]) {",
+  "new": "if !f.valueOK(cluster[j+1:]) && false {",
+  "expect": "killed"
+ },
+ {
+  "name": "Value: -f v",
+  "file": "internal/engine/spec.go",
+  "old": "\t\t\t\t\t\t\tif !f.valueOK(args[i+1].lit) {",
+  "new": "\t\t\t\t\t\t\tif !f.valueOK(args[i+1].lit) && false {",
+  "expect": "killed"
+ },
+ {
+  "name": "Value: DashValueOK path",
+  "file": "internal/engine/spec.go",
+  "old": "\t\t\t\t\tif !f.valueOK(args[i+1].lit) {\n\t\t\t\t\t\treturn false\n\t\t\t\t\t}\n\t\t\t\t\ti++\n",
+  "new": "\t\t\t\t\tif !f.valueOK(args[i+1].lit) && false {\n\t\t\t\t\t\treturn false\n\t\t\t\t\t}\n\t\t\t\t\ti++\n",
+  "expect": "survives",
+  "why": "no spec combines Value with DashValueOK yet; the check is there so a future one cannot bypass Value"
+ },
+ {
+  "name": "Positional check",
+  "file": "internal/engine/spec.go",
+  "old": "if s.Positional != nil && (a.subst || !s.Positional(a.lit)) {",
+  "new": "if s.Positional != nil && (a.subst || !s.Positional(a.lit)) && false {",
+  "expect": "killed"
+ },
+ {
+  "name": "Positional refuses an unseen operand",
+  "file": "internal/engine/spec.go",
+  "old": "(a.subst || !s.Positional(a.lit))",
+  "new": "(false || !s.Positional(a.lit))",
+  "expect": "survives",
+  "why": "a non-ArgvDataSafe spec refuses an unseen operand one line earlier"
+ },
+ {
+  "name": "repo: second segment checked",
+  "file": "internal/engine/ghvalues.go",
+  "old": "return ok && ghNameSegment(owner) && ghNameSegment(repo)",
+  "new": "return ok && ghNameSegment(owner) && repo != \"\"",
+  "expect": "killed"
+ },
+ {
+  "name": "repo: slash required",
+  "file": "internal/engine/ghvalues.go",
+  "old": "return ok && ghNameSegment(owner)",
+  "new": "return (ok || true) && ghNameSegment(owner)",
+  "expect": "survives",
+  "why": "with no slash the repo segment is empty and fails ghNameSegment"
+ },
+ {
+  "name": "notURL: host",
+  "file": "internal/engine/values.go",
+  "old": "u.Host == \"\" &&",
+  "new": "true &&",
+  "expect": "killed"
+ },
+ {
+  "name": "notURL: scheme",
+  "file": "internal/engine/values.go",
+  "old": "u.Scheme == \"\" &&",
+  "new": "true &&",
+  "expect": "survives",
+  "why": "a scheme needs ':', which every character set using notURL refuses first"
+ },
+ {
+  "name": "endpoint: character set",
+  "file": "internal/engine/ghvalues.go",
+  "old": "var ghEndpoint = allOf(nonEmpty, runesIn(\"-_./{}?=&,+~\"), notURL)",
+  "new": "var ghEndpoint = allOf(nonEmpty, notURL)",
+  "expect": "killed"
+ },
+ {
+  "name": "endpoint: parser",
+  "file": "internal/engine/ghvalues.go",
+  "old": "var ghEndpoint = allOf(nonEmpty, runesIn(\"-_./{}?=&,+~\"), notURL)",
+  "new": "var ghEndpoint = allOf(nonEmpty, runesIn(\"-_./{}?=&,+~\"))",
+  "expect": "killed"
+ },
+ {
+  "name": "allOf: every check",
+  "file": "internal/engine/values.go",
+  "old": "\t\t\tif !c(v) {\n\t\t\t\treturn false",
+  "new": "\t\t\tif !c(v) && false {\n\t\t\t\treturn false",
+  "expect": "killed"
+ },
+ {
+  "name": "api endpoint wired",
+  "file": "internal/engine/commands.go",
+  "old": "Positional:         ghEndpoint,",
+  "new": "Positional:         nil,",
+  "expect": "killed"
+ },
+ {
+  "name": "repo view positional wired",
+  "file": "internal/engine/commands.go",
+  "old": "Positional:         ghRepoName,",
+  "new": "Positional:         nil,",
+  "expect": "killed"
+ },
+ {
+  "name": "-R value wired",
+  "file": "internal/engine/commands.go",
+  "old": "flagSpec{Short: \"R\", Long: \"repo\", TakesArg: true, Value: ghRepoName},",
+  "new": "flagSpec{Short: \"R\", Long: \"repo\", TakesArg: true},",
+  "expect": "killed"
+ },
+ {
+  "name": "--hostname re-added",
+  "file": "internal/engine/commands.go",
+  "old": "\t\t\tflagSpec{Long: \"cache\", TakesArg: true},",
+  "new": "\t\t\tflagSpec{Long: \"cache\", TakesArg: true},\n\t\t\tflagSpec{Long: \"hostname\", TakesArg: true},",
+  "expect": "killed"
+ }
+]
