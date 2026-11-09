@@ -26,18 +26,43 @@ package engine
 //	                   so a finding can be eyeballed and re-tested by hand.
 //
 // Both tests skip when CORPUS is unset, so `go test ./...` stays unaffected.
+//
+// Scratchpad (§10). A record does not carry the event's scratchpad_dir, so a
+// replay with no scratchpad turns every scratch write the live hook ACCEPTED into
+// a blocker, one bucket per session path. replayHost recovers it from the first
+// Claude Code scratchpad path the command itself names, and treats the files as
+// writable (the directories are long gone). The check that makes this safe to
+// trust: on a corpus logged entirely by the current binary, "would allow now" is
+// 0 — any record that allowed under the inferred scratchpad would mean the live
+// payload carried a different one. "would allow now" is therefore also the
+// before/after measure for a classifier change: replay the same corpus with and
+// without it.
 
 import (
 	"bufio"
 	"encoding/json"
 	"fmt"
 	"os"
+	"regexp"
 	"sort"
 	"strings"
 	"testing"
 
 	"mvdan.cc/sh/v3/syntax"
 )
+
+// claudeScratchRe matches Claude Code's per-session scratchpad,
+// /tmp/claude-<uid>/<project>/<session uuid>/scratchpad.
+var claudeScratchRe = regexp.MustCompile(`/tmp/claude-[0-9]+/[^/\s"']+/[0-9a-f-]{36}/scratchpad`)
+
+// replayHost is the Host a logged command is replayed under: an empty
+// environment, as in the tables, plus the scratchpad the command names, if any.
+func replayHost(cmd string) testHost {
+	return testHost{
+		scratch:  claudeScratchRe.FindString(cmd),
+		writable: func(string) bool { return true },
+	}
+}
 
 // logRecord mirrors the on-disk JSON record shape written by the logging
 // package's formatRecord. It is duplicated here rather than imported because
@@ -121,19 +146,23 @@ func TestTriage(t *testing.T) {
 	// 2. Staleness. Records logged before the last whitelist change were judged
 	// by an older binary; any that allow now are already-fixed noise, not gaps.
 	// Reporting this split stops a stale corpus from inflating the findings.
-	var stale int
+	var stale, scratch int
 	var live []logRecord
 	for _, r := range recs {
 		if r.Kind != "fallthrough" || r.Command == "" {
 			continue
 		}
-		if classifyCommand(r.Command) == decisionAllow {
+		h := replayHost(r.Command)
+		if h.scratch != "" {
+			scratch++
+		}
+		if classifyCommandIn(r.Command, h) == decisionAllow {
 			stale++
 			continue
 		}
 		live = append(live, r)
 	}
-	fmt.Printf("\nreplay against the CURRENT whitelist:\n")
+	fmt.Printf("\nreplay against the CURRENT whitelist (scratchpad inferred for %d):\n", scratch)
 	fmt.Printf("  would allow now (already fixed, ignore): %d\n", stale)
 	fmt.Printf("  still fall through (the real corpus):    %d\n", len(live))
 
@@ -158,10 +187,16 @@ func blameCommand(parser *syntax.Parser, cmd string) string {
 	if err != nil {
 		return "<unparseable by mvdan/sh>"
 	}
-	sc := newScope(testHost{})
+	h := replayHost(cmd)
+	sc := newScope(h)
 	for _, st := range f.Stmts {
 		if !classifyStmtBind(st, sc) {
-			return blameStmt(st, sc)
+			tag := blameStmt(st, sc)
+			if h.scratch != "" {
+				// One bucket for every session, not one per scratchpad path.
+				tag = strings.ReplaceAll(tag, h.scratch, "$SCRATCH")
+			}
+			return tag
 		}
 	}
 	return "<no blocker found — classifier and triage disagree, investigate>"
