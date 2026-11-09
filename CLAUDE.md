@@ -149,6 +149,11 @@ Reading in this order is the fastest way to understand one event end to end:
   with no write path under any argv.
 - **`internal/engine/awk.go`** — `classifyAwkProgram` walks an awk program's AST (via the goawk
   fork) for `styleAwk`, positively whitelisting nodes/builtins.
+- **`internal/engine/sedscript.go`** — `sedScript`, a fail-closed parser for sed's
+  read-and-print subset, wired through `commandSpec.Program` / `flagSpec.Program`
+  (the generic "flags, a program, then files" hook in matchGNU). Its own code
+  because no Go parser agrees with GNU sed (FUTURE-WORK §4); GNU sed's
+  `--sandbox` judges it in `TestSedScriptAgainstGNUSandbox`.
 
 The safety argument is structural: the hook only ever *adds* an `allow`. A bug
 can at worst fail to accelerate; it can never wave through something the normal
@@ -164,6 +169,7 @@ nix flake check      # runs 2 checks: the corpus (checks.tests) AND a permissive
                      # license guard (checks.licenses, go-licenses check) — MUST pass
 nix build            # build the binary as a Nix derivation -> ./result/bin/classify-bash
 go run scripts/mutate.go testdata/mutants/*.json   # mutation pass: every safety check must be caught
+SED_ORACLE=1 go test -run TestSedScriptAgainstGNUSandbox ./internal/engine/  # GNU sed judges the sed parser (~30 s; always in flake check)
 CORPUS=corpus.jsonl scripts/replay-diff.sh master  # per-record decisions vs a rev; exit 1 if an allow is lost
 ./scripts/gen-third-party-licenses.sh  # regenerate THIRD_PARTY_LICENSES (in nix develop)
 ```

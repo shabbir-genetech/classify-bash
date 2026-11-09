@@ -12,7 +12,9 @@
 //	 "expect": "killed" | "survives", "why": "...", "run": "TestNotYetAllowed"}
 //
 // "run" is optional and overrides -run for that mutant: a check whose refusal is
-// harmless-but-unsupported is guarded by TestNotYetAllowed, not the wall.
+// harmless-but-unsupported is guarded by TestNotYetAllowed, not the wall. "env"
+// is optional extra environment for the test run (e.g. {"SED_ORACLE": "1"} for
+// a check only the GNU sed oracle can catch).
 //
 // "old" must occur in "file" EXACTLY once — an absent or ambiguous anchor is an
 // error, never a silent no-op. A mutant counts as killed only when a failure
@@ -37,13 +39,14 @@ import (
 )
 
 type mutant struct {
-	Name   string `json:"name"`
-	File   string `json:"file"`
-	Old    string `json:"old"`
-	New    string `json:"new"`
-	Expect string `json:"expect"`
-	Why    string `json:"why"`
-	Run    string `json:"run"`
+	Name   string            `json:"name"`
+	File   string            `json:"file"`
+	Old    string            `json:"old"`
+	New    string            `json:"new"`
+	Expect string            `json:"expect"`
+	Why    string            `json:"why"`
+	Run    string            `json:"run"`
+	Env    map[string]string `json:"env"`
 }
 
 // testLine is the one place a regex reads text: go test's own failure format,
@@ -111,6 +114,10 @@ func runOne(root string, m mutant, run string) (string, string) {
 
 	cmd := exec.Command("go", "test", "-count=1", "-run", run, "./...")
 	cmd.Dir = work
+	cmd.Env = os.Environ()
+	for k, v := range m.Env {
+		cmd.Env = append(cmd.Env, k+"="+v)
+	}
 	out, err := cmd.CombinedOutput()
 	if line := testLine.Find(out); line != nil {
 		return "killed", string(line)

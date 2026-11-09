@@ -83,7 +83,9 @@
       # TestMustNotAllow, TestEventDecode*). Failure means the classifier
       # regressed in a way that affects safety.
       checks.tests = pkgs.runCommand "classify-bash-tests" {
-        nativeBuildInputs = [pkgs.go];
+        # gnused: TestSedScriptAgainstGNUSandbox makes GNU sed the judge of the
+        # sed parser; SED_ORACLE=1 below turns its absence into a failure.
+        nativeBuildInputs = [pkgs.go pkgs.gnused];
         src = goSource;
       } ''
         # Go refuses to build from /build (TMPDIR root). Use a subdir.
@@ -99,6 +101,7 @@
         # buildGoModule's goModules output IS the vendor directory.
         cp -r ${classify-bash.goModules} ./vendor
         chmod -R +w ./vendor
+        export SED_ORACLE=1
         go test ./...
         touch $out
       '';

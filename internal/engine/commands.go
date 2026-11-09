@@ -1213,6 +1213,7 @@ var safeCommands = map[string]*commandSpec{
 	"journalctl": journalctlSpec(),
 	"fd":         fdSpec(),
 	"pgrep":      pgrepSpec(),
+	"sed":        sedSpec(),
 
 	// === Tier D: transparent wrappers (recursive classification) =========
 	// These commands exec the argv after a literal `--` separator. The tail
@@ -2592,6 +2593,35 @@ func fdSpec() *commandSpec {
 			flagSpec{Long: "one-file-system"},
 			flagSpec{Short: "h", Long: "help"},
 			flagSpec{Short: "V", Long: "version"},
+		),
+	}
+}
+
+// sedSpec is sed restricted to the scripts sedScript accepts (sedscript.go says
+// which and why). The script is the first positional, or every -e/--expression
+// value; the rest are input files. NOT ArgvDataSafe. Deliberately excluded:
+//   - -i/--in-place (in every spelling, -i.bak and clusters like -ni): writes the
+//     input files;
+//   - -f/--file: the script comes from a file the classifier cannot see;
+//   - --follow-symlinks (only meaningful with -i), -l, --debug: no logged demand.
+func sedSpec() *commandSpec {
+	return &commandSpec{
+		Style:              styleGNU,
+		AllowAnyPositional: true,
+		Program:            sedScript,
+		Flags: flags(
+			flagSpec{Short: "e", Long: "expression", TakesArg: true, Value: sedScript, Program: true},
+			flagSpec{Short: "n", Long: "quiet"},
+			flagSpec{Long: "silent"},
+			flagSpec{Short: "E", Long: "regexp-extended"},
+			flagSpec{Short: "r"},
+			flagSpec{Short: "s", Long: "separate"},
+			flagSpec{Short: "z", Long: "null-data"},
+			flagSpec{Short: "u", Long: "unbuffered"},
+			flagSpec{Long: "posix"},
+			flagSpec{Long: "sandbox"},
+			flagSpec{Long: "help"},
+			flagSpec{Long: "version"},
 		),
 	}
 }

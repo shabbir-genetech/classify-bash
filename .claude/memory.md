@@ -20,6 +20,14 @@ README.md — this file is for how we work, not what the code is.)
   leaf shapes from one constructor (`ghPRSelected`), so a new subcommand cannot
   forget a check. Tooling that a second pass would rewrite gets committed instead
   (`scripts/mutate.go` + `testdata/mutants/`).
+- **Don't hand-roll where a battle-tested open-source option exists (owner,
+  2026-11-09).** Survey first (license is a hard gate: `checks.licenses`). For
+  this tool "battle-tested" means *agrees with the implementation that will run*:
+  a parser for another dialect, or one that only has to agree with its own
+  engine, can be worse than none (DataDog rshell's sed parser and the bracket
+  delimiter — FUTURE-WORK §4). Where the only faithful implementation is the real
+  tool, keep our code small and make the real tool its judge in a test
+  (`TestSedScriptAgainstGNUSandbox`).
 - **Prefer a parser to a regex where feasible (owner, 2026-11-09).** Decide what a
   value *is* by parsing it the way the consuming tool does — `net/url` for a gh
   endpoint, `mvdan/sh` for a command, goawk for an awk program — rather than by

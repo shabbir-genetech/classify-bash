@@ -358,7 +358,33 @@ not DoS).
 
 ---
 
-## 4. `sed` parser — **DEFERRED / on-demand (RESEARCH)**
+## 4. `sed` parser — **IMPLEMENTED (2026-11-09)**
+
+Shipped as `sedscript.go` (a small parser for the read-and-print subset) plus a
+generic program hook in `matchGNU` (`commandSpec.Program`, `flagSpec.Program`), so
+sed reuses the GNU flag parser for `-ne`, `--expression=`, clusters and
+permutation. What was decided, and why the parser is our own:
+
+- **The library survey (the open research below) came back empty for this use.**
+  `zkry/go-sed` is GPL-3.0 (fails `checks.licenses`) and unmaintained since 2019;
+  `rwtodd/Go.Sed` has no clear license and uses Go `regexp` syntax. DataDog's
+  `rshell` (Apache-2.0, active, security-minded: it refuses `e`/`w`/`W`/`r`/`R`
+  and `s///w`/`s///e`) is the closest, but exports no parser, would raise this
+  module's `mvdan.cc/sh` from 3.10 to 3.14 through its requirements, and — the
+  deciding point — **ends a regex at the first delimiter even inside a bracket
+  expression, where GNU does not.** rshell runs its own engine, so that is
+  consistent for rshell; here GNU sed runs, so a gate built on that parser
+  accepts `s/[/]/g;/w x⏎/p`, which GNU 4.10 reads as an `s` with flags
+  `w x` and answers by creating (truncating) `x`. Verified.
+- **The battle-tested implementation judges ours instead.** GNU sed's
+  `--sandbox` refuses, at parse time, every program containing `e`, `w` or `r`,
+  so `TestSedScriptAgainstGNUSandbox` (SED_ORACLE=1, always in
+  `nix flake check`) requires every script `sedScript` accepts — table cases plus
+  ~17,500 generated combinations of delimiters, brackets, escapes, separators and
+  each forbidden command — to pass `sed --sandbox` and create no file. It found
+  one disagreement on its first run (`q`/`Q` take one address at most), fixed.
+- **Replay:** 339 more post-10-24 records allow (887 cumulative across this
+  pass's changes), 0 lost in logs or transcripts.
 
 > **Log evidence (2026-06-09):** confirms "ROI ≈ 0". In the first corpus `sed`
 > showed up only as `sed -i` (write — correctly rejected) or inside an

@@ -65,6 +65,11 @@ type flagSpec struct {
 	// positively (the shapes that are known not to name a host), never as a
 	// deny-list. Consulted by matchGNU only.
 	Value func(string) bool
+
+	// Program marks a flag whose value IS the program (`sed -e SCRIPT`): once one
+	// is seen, the command's positionals are all operands. Its Value must be the
+	// program check (TestSpecInvariants), so a program never arrives unchecked.
+	Program bool
 }
 
 // valueOK applies f.Value, if any, to a flag value.
@@ -146,6 +151,13 @@ type commandSpec struct {
 	// positional-side twin of flagSpec.Value: `gh repo view HOST/o/r` and
 	// `gh api https://HOST/x` send credentials to HOST. Consulted by matchGNU only.
 	Positional func(string) bool
+
+	// Program, when non-nil, makes the first positional a program text this
+	// check must accept — unless a flag marked Program (`sed -e`) supplied the
+	// program, after which every positional is an operand. No program at all
+	// falls through. The generic form of "flags, a program, then files"; matchGNU
+	// only.
+	Program func(string) bool
 }
 
 // argToken is one parsed argv word handed to the matchers. It is either a literal
@@ -229,6 +241,7 @@ func (s *commandSpec) matchGNU(args []argToken) bool {
 	// opaque data and we stop validating (the fast path that preserves
 	// `cat file --anything`). A literal `--` ends flag parsing for everyone.
 	var positionals []argToken
+	sawProgram := false // a Program flag (sed -e) supplied the program
 	i := 0
 	for i < len(args) {
 		tok := args[i]
@@ -240,7 +253,7 @@ func (s *commandSpec) matchGNU(args []argToken) bool {
 			if s.Subcommands != nil {
 				return s.dispatchSubcommand(tail)
 			}
-			return s.acceptPositionals(append(positionals, tail...))
+			return s.acceptPositionals(append(positionals, tail...), sawProgram)
 		}
 
 		// A substituted operand is never a flag — skip the flag checks; it is a
@@ -261,6 +274,7 @@ func (s *commandSpec) matchGNU(args []argToken) bool {
 				if !ok {
 					return false
 				}
+				sawProgram = sawProgram || f.Program
 				if hasVal {
 					if !f.TakesArg && !f.OptionalArg {
 						return false
@@ -305,6 +319,7 @@ func (s *commandSpec) matchGNU(args []argToken) bool {
 					if !ok {
 						return false
 					}
+					sawProgram = sawProgram || f.Program
 					if f.TakesArg {
 						if j+1 < len(cluster) {
 							// Rest of cluster is the value; nothing more to scan.
@@ -354,7 +369,7 @@ func (s *commandSpec) matchGNU(args []argToken) bool {
 		}
 		if s.ArgvDataSafe {
 			// Safe under any argv: the rest is opaque data, stop validating flags.
-			return s.acceptPositionals(append(positionals, args[i:]...))
+			return s.acceptPositionals(append(positionals, args[i:]...), sawProgram)
 		}
 		// Non-ArgvDataSafe: record the positional and keep validating later flags.
 		positionals = append(positionals, tok)
@@ -364,7 +379,7 @@ func (s *commandSpec) matchGNU(args []argToken) bool {
 	if s.Subcommands != nil {
 		return false // subcommand required, none seen
 	}
-	return s.acceptPositionals(positionals)
+	return s.acceptPositionals(positionals, sawProgram)
 }
 
 // dispatchSubcommand selects and recurses into a subcommand. args[0] is the
@@ -388,7 +403,15 @@ func (s *commandSpec) dispatchSubcommand(args []argToken) bool {
 // positionals. A substituted positional is opaque data, accepted only for an
 // ArgvDataSafe command (safe under any argv); every ArgvDataSafe command also sets
 // AllowAnyPositional, so the literal-positional gate below still applies.
-func (s *commandSpec) acceptPositionals(positionals []argToken) bool {
+// sawProgram reports that a Program flag supplied the program; otherwise a spec
+// with a Program check takes its first positional as the program.
+func (s *commandSpec) acceptPositionals(positionals []argToken, sawProgram bool) bool {
+	if s.Program != nil && !sawProgram {
+		if len(positionals) == 0 || positionals[0].subst || !s.Program(positionals[0].lit) {
+			return false
+		}
+		positionals = positionals[1:]
+	}
 	for _, a := range positionals {
 		if a.subst && !s.ArgvDataSafe {
 			return false

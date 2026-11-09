@@ -20,6 +20,23 @@ func TestSpecInvariants(t *testing.T) {
 				t.Errorf("%s: Positional is set without AllowAnyPositional, so no positional reaches it", path)
 			}
 		}
+		if s.Program != nil && (s.Style != styleGNU || s.Subcommands != nil || s.ArgvDataSafe) {
+			// Only matchGNU's leaf consults it, and an ArgvDataSafe spec's
+			// fast path would hand it an unvalidated tail.
+			t.Errorf("%s: Program needs a GNU leaf spec that is not ArgvDataSafe", path)
+		}
+		hasProgramFlag := false
+		for _, f := range s.Flags {
+			if f.Program {
+				hasProgramFlag = true
+				if f.Value == nil || !f.TakesArg {
+					t.Errorf("%s: flag %q/%q supplies the program but has no Value check", path, f.Short, f.Long)
+				}
+			}
+		}
+		if hasProgramFlag && s.Program == nil {
+			t.Errorf("%s: a Program flag without a Program check on the spec", path)
+		}
 		if s.ArgvDataSafe && !s.AllowAnyPositional {
 			// acceptPositionals relies on this: an opaque operand passes the
 			// ArgvDataSafe gate and must still meet the literal-positional one.

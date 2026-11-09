@@ -1,0 +1,89 @@
+[
+ {
+  "name": "sed: -i re-added",
+  "file": "internal/engine/commands.go",
+  "old": "\t\t\tflagSpec{Long: \"sandbox\"},\n",
+  "new": "\t\t\tflagSpec{Long: \"sandbox\"},\n\t\t\tflagSpec{Short: \"i\", Long: \"in-place\", OptionalArg: true},\n",
+  "expect": "killed"
+ },
+ {
+  "name": "sed: -f re-added",
+  "file": "internal/engine/commands.go",
+  "old": "\t\t\tflagSpec{Long: \"sandbox\"},\n",
+  "new": "\t\t\tflagSpec{Long: \"sandbox\"},\n\t\t\tflagSpec{Short: \"f\", Long: \"file\", TakesArg: true},\n",
+  "expect": "killed"
+ },
+ {
+  "name": "sed: -e value unchecked",
+  "file": "internal/engine/commands.go",
+  "old": "TakesArg: true, Value: sedScript, Program: true}",
+  "new": "TakesArg: true, Program: true}",
+  "expect": "killed"
+ },
+ {
+  "name": "sed: no program check",
+  "file": "internal/engine/commands.go",
+  "old": "\t\tProgram:            sedScript,\n",
+  "new": "\t\tProgram:            func(string) bool { return true },\n",
+  "expect": "killed"
+ },
+ {
+  "name": "parser: w flag accepted",
+  "file": "internal/engine/sedscript.go",
+  "old": "p.skip(\"gpIi\" + sedDigits)",
+  "new": "p.skip(\"gpIiw\" + sedDigits)",
+  "expect": "killed"
+ },
+ {
+  "name": "parser: e flag accepted",
+  "file": "internal/engine/sedscript.go",
+  "old": "p.skip(\"gpIi\" + sedDigits)",
+  "new": "p.skip(\"gpIie\" + sedDigits)",
+  "expect": "killed"
+ },
+ {
+  "name": "parser: w command accepted",
+  "file": "internal/engine/sedscript.go",
+  "old": "\tcase p.at(\"pd=\"):",
+  "new": "\tcase p.at(\"pd=w\"):",
+  "expect": "killed"
+ },
+ {
+  "name": "parser: bracket tracking off",
+  "file": "internal/engine/sedscript.go",
+  "old": "\t\tcase brackets && c == '[':",
+  "new": "\t\tcase false && brackets && c == '[':",
+  "expect": "killed"
+ },
+ {
+  "name": "parser: separator check off",
+  "file": "internal/engine/sedscript.go",
+  "old": "\t\tif !p.eof() && !p.at(\";\\n\") {",
+  "new": "\t\tif false && !p.eof() && !p.at(\";\\n\") {",
+  "expect": "survives",
+  "why": "the next command must still parse, and no accepted command can start where GNU would read a w flag (w is not one)"
+ },
+ {
+  "name": "parser: q with a range",
+  "file": "internal/engine/sedscript.go",
+  "old": "case p.at(\"qQ\") && !ranged:",
+  "new": "case p.at(\"qQ\") && (!ranged || true):",
+  "expect": "killed",
+  "run": "TestSedScriptAgainstGNUSandbox",
+  "env": {
+   "SED_ORACLE": "1"
+  }
+ },
+ {
+  "name": "parser: backslash in brackets",
+  "file": "internal/engine/sedscript.go",
+  "old": "\t\tcase c == '\\\\' || c == '\\n':\n\t\t\treturn false\n\t\tcase c == '[' && p.i+1",
+  "new": "\t\tcase c == '\\n':\n\t\t\treturn false\n\t\tcase c == '[' && p.i+1",
+  "expect": "survives",
+  "why": "refused rather than modelled; no misparse is known, and the GNU oracle accepts what the mutant admits",
+  "run": "TestMustNotAllow|TestSedScriptAgainstGNUSandbox",
+  "env": {
+   "SED_ORACLE": "1"
+  }
+ }
+]

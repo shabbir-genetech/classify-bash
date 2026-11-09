@@ -369,6 +369,30 @@ func TestMustAllow(t *testing.T) {
 		"gh pr list -R o/r --state merged -L 5 --json number,title",
 		"gh pr list --search 'is:open review:required' --author @me",
 		"gh pr checks 7 -R o/r --required",
+		// sed: the parsed read-and-print subset
+		"sed -n '1,10p' file",
+		"sed 's/a/b/' file",
+		"sed -n '88,96p' file",
+		"sed -n '295,350p;369,376p' file",
+		"sed -n '/start/,/^## /p' file",
+		`sed -E 's/^([^ ]+) \[(.*)\]$/\2\/\1/' file`,
+		"sed '$d' file",
+		"sed 5q file",
+		"sed -n '$=' file",
+		"sed -e 's/a/b/g' -e '1d' file",
+		"sed --expression='s|x|y|g' file",
+		"cat file | sed 's/a/b/'",
+		"sed -n '/x/!p' file",
+		"sed -n '/X/Ip' file",
+		"sed 's/a/b/2g' file",
+		"sed -ne 's/a/b/p' file",
+		"sed 's/[/]/X/' file",          // the delimiter inside brackets
+		"sed 's/[[:space:]]*$//' file", // a character class
+		"sed -n '1p;3p' a b",
+		`N=5; sed -n "1,${N}p" file`,
+		"sed -n -- '1,3p' file",
+		"sed -n 'p' -- -file",
+		"sed -n '1,3p\n5p' file",
 		// fd search, pgrep listing
 		"fd -a foo /tmp",
 		"fd -t f -e go . src",
@@ -767,7 +791,7 @@ func TestMustNotAllow(t *testing.T) {
 		`"$(ls)"`,                           // whole command name is a substitution
 		`echo "$(rm foo)"`,                  // inner command not read-only
 		`echo "$(git push)"`,                // inner command not read-only
-		`echo "$(cat /etc/x | sed s/a/b/)"`, // inner pipeline has a non-whitelisted stage
+		`echo "$(cat /etc/x | tee /tmp/y)"`, // inner pipeline has a non-whitelisted stage
 		`echo "$(ls && rm x)"`,              // inner compound: one stage not read-only
 		`echo "$(ls; rm x)"`,                // inner list: one stage not read-only
 		`echo "$(ls)$(rm x)"`,               // two substitutions in one word, one unsafe
@@ -891,6 +915,40 @@ func TestMustNotAllow(t *testing.T) {
 		"gh pr review 1 --approve",
 		"gh pr ready 1",
 		"gh pr diff 1 --allow-escape-sequences",
+		// sed: every write, exec and read path, in every spelling and position.
+		"sed -i 's/a/b/' file",
+		"sed -i.bak 's/a/b/' file",
+		"sed -ni p file", // clustered
+		"sed --in-place 's/a/b/' file",
+		"sed --in-place=.bak 's/a/b/' file",
+		"sed -e 's/a/b/' -i file", // after the script
+		"sed -f script.sed file",
+		"sed -f /tmp/evil.sed -e p file", // an unseen script beside a seen one
+		"sed 's/a/b/wgpi' file",          // w flag whose filename is all flag letters
+		"sed 'w;p' file",                 // w's filename runs to the end of the line: ";p"
+		"sed '1w;p' file",
+		"sed 's/a/b/w /tmp/x' file", // s///w writes
+		"sed 's/a/b/gw /tmp/x' file",
+		"sed 's|a|b|w /tmp/x' file",     // another delimiter
+		`sed 's/a\/b/c/w /tmp/x' file`,  // after an escaped delimiter
+		"sed 's/[/]/X/w /tmp/x' file",   // after a bracketed delimiter (GNU writes this)
+		"sed 's/[/]/g;s|a/w x|b|' file", // bracket-unaware parsers see two s commands; GNU writes x|b|
+		"sed 's/a/b/e' file",            // s///e executes the pattern space
+		"sed 'e touch /tmp/x' file",
+		"sed '1e touch /tmp/x' file",
+		"sed 'w /tmp/x' file",
+		"sed -n '1,3w /tmp/x' file",
+		"sed 'W /tmp/x' file",
+		"sed 's/a/b/;w /tmp/x' file", // a second command
+		"sed 's/a/b/\nw /tmp/x' file",
+		"sed -e p -e 'w /tmp/x' file", // a second -e
+		"sed --expression=p --expression='w /tmp/x' file",
+		"sed 1R/etc/shadow file",
+		`sed "$(echo s/a/b/)" file`, // an unseen script
+		"sed",                       // no script
+		"sed -n",
+		"sed -n '1p' file > /etc/x", // the redirect rules still apply
+		"sed --bogus-flag p file",
 		// fd: every exec path, in every position a flag can take.
 		"fd -x rm",
 		"fd foo -x rm {}", // after the pattern
@@ -1012,8 +1070,16 @@ func TestNotYetAllowed(t *testing.T) {
 		"case $x in a) echo a;; esac",
 
 		// Read-only forms of unwhitelisted script/archive tools.
-		"sed -n '1,10p' file", // print a line range to stdout
-		"sed 's/a/b/' file",   // substitute to stdout (no -i)
+		"sed 'y/abc/xyz/' file",       // sed commands outside the parsed subset
+		"sed -n '/a/{p;q}' file",      // a block
+		"sed '1r /etc/hostname' file", // reads another file (no demand)
+		"sed '1~2d' file",             // GNU first~step
+		"sed -n '1,+3p' file",         // GNU addr,+N
+		"sed '' file",                 // empty script
+		`sed 's/[\n]/x/' file`,        // a backslash inside brackets is not modelled
+		"sed 's/a/b/M' file",          // a flag outside the set
+		"sed -n '/x/Mp' file",
+		"sed -l 40 -n p file", // -l: no demand
 		"tar -tf archive.tar", // list archive contents
 
 		// journalctl follow: read-only but never terminates; -f excluded for v1.
