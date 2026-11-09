@@ -2494,6 +2494,14 @@ func ghRepoViewSpec() *commandSpec {
 // unwhitelisted flag — after the endpoint positional too — and falls through. NOT
 // ArgvDataSafe. Deliberately excluded: -X/--method, -f/--raw-field, -F/--field,
 // --input, -H/--header.
+//
+// --hostname is excluded as a demonstrated credential leak (2026-11-09, gh 2.102):
+// with GH_ENTERPRISE_TOKEN set, `gh api --hostname <any host> user` sent
+// `Authorization: token …` to that host (GH_DEBUG=api, an unresolvable .invalid
+// host, so nothing left the machine). Without a token it is still an outbound GET
+// to a caller-chosen host and path, which is curl's job, and curl is not listed.
+// --jq can read $ENV, which discloses no more than the whitelisted printenv;
+// --template is gh's Go template, data only.
 func ghApiSpec() *commandSpec {
 	return &commandSpec{
 		Style:              styleGNU,
@@ -2503,7 +2511,6 @@ func ghApiSpec() *commandSpec {
 			{Long: "paginate"},
 			{Short: "q", Long: "jq", TakesArg: true},
 			{Short: "t", Long: "template", TakesArg: true},
-			{Long: "hostname", TakesArg: true},
 			{Short: "i", Long: "include"},
 			{Long: "slurp"},
 			{Long: "help"},

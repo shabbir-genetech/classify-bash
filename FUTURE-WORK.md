@@ -668,9 +668,20 @@ nothing *itself*; it just names the program that does.
 1. **Re-audit the specs that predate the rule.** The sweep enumerated all 374
    `TakesArg` flags and checked the obvious program-valued shapes, but only
    `jj`, `sort`, `nix`, `git`, `find`, `rg`, `xargs` and `awk` were walked
-   properly. `docker`, `systemctl` and `gh` are the largest specs given only a
+   properly. `docker` and `systemctl` are the largest specs given only a
    format-flag spot-check. Expect a low but non-zero yield — `git` looked clean
    twice before `--textconv` turned up.
+
+   **`gh` walked 2026-11-09 — one finding, removed.** Every value-taking flag, by
+   subcommand: `--json`, `-R/--repo`, `-b/--branch` and `--cache` are data;
+   `--template` is gh's Go template (data only); `--jq` is gh's built-in jq, which
+   can read `$ENV` — no more than the whitelisted `printenv` already shows.
+   **`gh api --hostname` was a credential leak:** with `GH_ENTERPRISE_TOKEN` set, gh
+   sent `Authorization: token …` to whatever host was named (confirmed with
+   `GH_DEBUG=api` against an unresolvable `.invalid` host). It is a new shape for
+   this audit: not a program, but **a value that decides where a credential is
+   sent**. Add "host/URL/remote" values to the questions asked of every flag.
+   `gh auth status -h` stays: it made no request for an unconfigured host.
 2. **Sibling-subcommand check.** The `--textconv` miss came from testing a flag
    on `git log`/`git blame` (where it is not whitelisted) and concluding "git is
    clean" — it was whitelisted on `cat-file` and `grep`. Any audit must walk the
