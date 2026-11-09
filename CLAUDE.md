@@ -109,9 +109,12 @@ Reading in this order is the fastest way to understand one event end to end:
   which forgets afterwards every name the child bound, rebound or forgot (never
   just drops it — a dropped rebinding left the old value checked); `{ …; }` recurses
   in the current scope; literal `for` loops are `loops.go`; every other compound
-  kind is rejected, and an unknown AST node or binary operator calls `failLoud`. `wordLiteral` (still used for the
-  command name, which must stay literal) rejects any expansion; `resolveWord` is
-  `wordLiteral` plus bound `$VAR`. `argTokens` classifies each operand as a literal
+  kind is rejected, and an unknown AST node or binary operator calls `failLoud`.
+  A word's VALUE comes from `mvdan/sh`'s expander (`expandWord` in `vars.go`), never
+  from its source text: quote removal, `$'…'` escapes and brace expansion are
+  bash's, with only bound `$VAR`s as the environment. `resolveWord` wants exactly
+  one field (a command name, a redirect target); `argTokens` hands every field to
+  the spec; `wordLiteral` is `resolveWord` with nothing bound. `argTokens` classifies each operand as a literal
   or as an opaque token, the one allowed kind of unseen value: a quoted `"$(...)"`
   whose inner command classifies read-only (`wordQuotedSubst`/`classifyCmdSubst`),
   or a quoted plain `"$?"` (`exitStatusParam`). That token reaches a spec only as an

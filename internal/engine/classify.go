@@ -250,6 +250,11 @@ func safeRedirect(r *syntax.Redirect, sc *scope) bool {
 	if r.N != nil && strings.HasPrefix(r.N.Value, "{") {
 		return false
 	}
+	if r.Op == syntax.Hdoc || r.Op == syntax.DashHdoc {
+		// A heredoc's word is its DELIMITER, not a file, and its quoting (as in
+		// <<\EOF) is what keeps the body unexpanded; the body decides.
+		return hdocBodyLiteral(r.Hdoc)
+	}
 	target, ok := resolveWord(r.Word, sc)
 	if !ok {
 		return false // e.g. `> $(...)` or an unbound `> $VAR`
@@ -318,8 +323,12 @@ func hdocBodyLiteral(body *syntax.Word) bool {
 func argTokens(ws []*syntax.Word, sc *scope) ([]argToken, bool) {
 	out := make([]argToken, 0, len(ws))
 	for _, w := range ws {
-		if s, ok := resolveWord(w, sc); ok {
-			out = append(out, argToken{lit: s})
+		if fields, ok := expandWord(w, sc); ok {
+			// One word may be several arguments (brace expansion); each meets
+			// the spec on its own.
+			for _, f := range fields {
+				out = append(out, argToken{lit: f})
+			}
 			continue
 		}
 		if wordQuotedSubst(w, sc) {
@@ -396,34 +405,10 @@ func classifyCmdSubst(cs *syntax.CmdSubst, sc *scope) bool {
 	return classifyStmts(cs.Stmts, sc)
 }
 
-// wordLiteral returns the literal string value of a Word if and only if every
-// part is a Lit, a SglQuoted (always literal), or a DblQuoted whose own parts
-// are all Lit. Anything else (ParamExp, CmdSubst, ArithmExp, ProcSubst,
-// ExtGlob) makes the word unclassifiable for our purposes.
+// wordLiteral returns the value of a word with no expansion at all: resolveWord
+// with nothing bound, so the two can never disagree about quoting. Any
+// expansion (ParamExp, CmdSubst, ArithmExp, ProcSubst, ExtGlob) is refused, as
+// is any quote or escape whose value differs from its text (see resolveWord).
 func wordLiteral(w *syntax.Word) (string, bool) {
-	if w == nil {
-		return "", false
-	}
-	var b strings.Builder
-	for _, part := range w.Parts {
-		switch p := part.(type) {
-		case *syntax.Lit:
-			b.WriteString(p.Value)
-		case *syntax.SglQuoted:
-			b.WriteString(p.Value)
-		case *syntax.DblQuoted:
-			for _, inner := range p.Parts {
-				lit, ok := inner.(*syntax.Lit)
-				if !ok {
-					return "", false
-				}
-				b.WriteString(lit.Value)
-			}
-		default:
-			// ParamExp ($VAR), CmdSubst ($(...)), ArithmExp ($((...))),
-			// ProcSubst (<(...)), ExtGlob, etc. all land here.
-			return "", false
-		}
-	}
-	return b.String(), true
+	return resolveWord(w, newScope(noHost{}))
 }

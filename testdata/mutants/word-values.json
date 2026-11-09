@@ -1,0 +1,46 @@
+[
+ {
+  "name": "argTokens: only the first field",
+  "file": "internal/engine/classify.go",
+  "old": "\t\t\tfor _, f := range fields {",
+  "new": "\t\t\tfor _, f := range fields[:1] {",
+  "expect": "killed"
+ },
+ {
+  "name": "resolveWord: several fields accepted",
+  "file": "internal/engine/vars.go",
+  "old": "if !ok || len(fields) != 1 {",
+  "new": "if !ok || len(fields) < 1 {",
+  "expect": "killed"
+ },
+ {
+  "name": "$\"…\" accepted",
+  "file": "internal/engine/vars.go",
+  "old": "if quoted || p.Dollar || !resolvableParts(p.Parts, sc, true) {",
+  "new": "if quoted || !resolvableParts(p.Parts, sc, true) {",
+  "expect": "survives",
+  "why": "the expander decodes $\"-o\" to -o, which the spec then refuses; the refusal guards against a translation catalog changing the value"
+ },
+ {
+  "name": "expander: NoUnset off",
+  "file": "internal/engine/vars.go",
+  "old": "NoUnset: true}",
+  "new": "NoUnset: false}",
+  "expect": "survives",
+  "why": "resolvableParts admits only bound names, so nothing unset reaches the expander"
+ },
+ {
+  "name": "structure: unbound names admitted",
+  "file": "internal/engine/vars.go",
+  "old": "\t\t\tv, ok := boundParam(p, sc)\n\t\t\tif !ok || (!quoted && !unquotedSafe(v)) {",
+  "new": "\t\t\tv, ok := boundParam(p, sc)\n\t\t\tif (!quoted && ok && !unquotedSafe(v)) {",
+  "expect": "killed"
+ },
+ {
+  "name": "structure: unquoted value may split",
+  "file": "internal/engine/vars.go",
+  "old": "\t\t\tv, ok := boundParam(p, sc)\n\t\t\tif !ok || (!quoted && !unquotedSafe(v)) {",
+  "new": "\t\t\tv, ok := boundParam(p, sc)\n\t\t\tif !ok || (!quoted && v == \"\\x00\") {",
+  "expect": "killed"
+ }
+]

@@ -570,6 +570,22 @@ properties:
   20,842 logged commands and 0 of 22,151 transcript commands (all since
   2026-10-08, so the whole life of §6) changed decision — the fix costs no
   acceleration, and no agent command ever used the hole.
+- **Every check sees a word's value, never its text (fixed 2026-11-09).** The
+  classifier used to read a word's *source text*, so anything bash rewrites
+  before the command sees it could hide a flag from the spec. Three such forms
+  classified allow: `sort $'\x2do' x f` (ANSI-C escape), `sort \-o x f`
+  (backslash removal) and `sort {-o,x} f` (brace expansion) — each is
+  `sort -o x f` to bash, a write; `git log $'\x2d-output=x'` and
+  `jj log $'\x2d-tool' p` were the same with a write and an exec flag. Now
+  `expandWord` asks `mvdan/sh`'s own expander (`expand.Fields`) for the value,
+  over the whole word, with only the bound names as environment and `NoUnset`.
+  A word may be several arguments, and `argTokens` checks each; a command name or
+  redirect target must be exactly one. `$"…"` is refused (a translation catalog
+  could change it). The first attempt simply refused every backslash and `$'…'`;
+  replaying the transcripts showed that cost 839 of 22,151 accelerations (agents
+  write `grep -E "a\|b"` constantly), and the expander costs none. Replays: no
+  logged or transcript command the old binary allowed is refused now, so none
+  of these forms was ever used.
 - **The assignment does nothing else.** Assigning an *exported* name changes every
   later child's environment — `HOME=…; git log` reads another `.gitconfig`, whose
   pager is a program. So only 1–3-character names are bindable, minus a reserved

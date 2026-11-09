@@ -773,6 +773,20 @@ func TestMustNotAllow(t *testing.T) {
 		`echo "$(ls)$(rm x)"`,               // two substitutions in one word, one unsafe
 		`sort --output="$(ls)"`,             // substituted value feeds a write flag → write
 		`cat "$(ls)" > /etc/passwd`,         // redirect write not masked by the substitution
+		// A word's VALUE, not its text: quote removal and escapes turned these into
+		// write and exec flags while the spec saw plain positionals (until 2026-11-09).
+		`sort $'\x2do' /tmp/x /etc/hostname`, // bash: sort -o /tmp/x
+		`git log $'\x2d-output=/tmp/x'`,      // bash: git log --output=/tmp/x
+		`jj log $'\x2d-tool' /tmp/evil`,      // bash: jj log --tool /tmp/evil
+		`sort \-o /tmp/x /etc/hostname`,      // bash removes the backslash
+		`git log \--output=/tmp/x`,
+		`sort $"-o" /tmp/x /etc/hostname`,  // locale-translated quote
+		`echo x > $'\x2fetc\x2fpasswd'`,    // a redirect target, same rule
+		`sort {-o,/tmp/x} /etc/hostname`,   // brace expansion: bash passes -o /tmp/x
+		`sort {-o,"/tmp/x"} /etc/hostname`, // a brace spanning a quote
+		`git log {--output=/tmp/x,HEAD}`,
+		`sort {/etc/hostname,-o} /tmp/x`, // the flag in a LATER field: every field is checked
+		`{sort,-o,/tmp/x} /etc/hostname`, // a brace in the command name: bash runs sort -o /tmp/x
 		// A rebinding inside a conditional scope must not leave the OLD value checked:
 		// bash keeps it when the chain succeeds (&&) or the left side fails (||), and
 		// these wrote /etc/passwd while classifying allow until 2026-11-09.

@@ -3,6 +3,7 @@ package engine
 import (
 	"strings"
 
+	"mvdan.cc/sh/v3/expand"
 	"mvdan.cc/sh/v3/syntax"
 )
 
@@ -175,47 +176,77 @@ func dblQuotedInto(b *strings.Builder, p *syntax.DblQuoted, sc *scope) bool {
 	return true
 }
 
-// resolveWord is wordLiteral plus bound variables: the literal value of a word
-// whose only expansions are `$NAME` of names bound in sc. Literal parts keep
-// wordLiteral's existing treatment, so adding §6 changes nothing for a word
-// with no variable in it.
+// resolveWord is the value bash gives a word whose only expansions are `$NAME` of
+// names bound in sc — and wordLiteral, with no bindings, is the same function.
+//
+// It returns the word's VALUE — what bash passes after quote removal, escapes and
+// brace expansion — computed by mvdan/sh's own expander rather than by hand.
+// Taking the source text instead let `sort $'\x2do' x f`, `sort \-o x f` and
+// `sort {-o,x} f` classify as plain positionals while bash ran `sort -o x f`, a
+// write (fixed 2026-11-09). Two steps, both fail-closed:
+//
+//  1. Structure: only literal text, `'…'`/`$'…'` quotes, double quotes holding
+//     text and bound variables, and unquoted bound variables that cannot split
+//     or glob. `$"…"` is refused: a translation catalog could change its value.
+//  2. Value: expand.Fields over the whole word (a brace can span quotes), with
+//     exactly the scope's bindings as the environment and NoUnset, so nothing
+//     unbound can expand to a silent empty string.
+//
+// resolveWord wants exactly ONE field (a command name, a redirect target, a flag
+// value); argTokens takes every field of expandWord as its own argument, so
+// `stat d/{a,b}.md` checks two operands and `sort {-o,x} f` meets sort's spec as
+// `-o x f` and is refused there. Glob characters and a leading `~` stay as
+// written, as before: the expander has no filesystem or HOME here, and those
+// reach a spec as plain operands.
 func resolveWord(w *syntax.Word, sc *scope) (string, bool) {
-	if w == nil {
+	fields, ok := expandWord(w, sc)
+	if !ok || len(fields) != 1 {
 		return "", false
 	}
-	var b strings.Builder
-	for _, part := range w.Parts {
+	return fields[0], true
+}
+
+// expandWord returns the arguments bash makes of w (see resolveWord).
+func expandWord(w *syntax.Word, sc *scope) ([]string, bool) {
+	if w == nil || !resolvableParts(w.Parts, sc, false) {
+		return nil, false
+	}
+	pairs := make([]string, 0, len(sc.vars))
+	for k, v := range sc.vars {
+		pairs = append(pairs, k+"="+v)
+	}
+	cfg := &expand.Config{Env: expand.ListEnviron(pairs...), NoUnset: true}
+	fields, err := expand.Fields(cfg, w)
+	if err != nil || len(fields) == 0 {
+		return nil, false
+	}
+	return fields, true
+}
+
+// resolvableParts is resolveWord's structural check. quoted reports whether the
+// parts sit inside double quotes, where a bound value is not split or globbed.
+func resolvableParts(parts []syntax.WordPart, sc *scope, quoted bool) bool {
+	for _, part := range parts {
 		switch p := part.(type) {
 		case *syntax.Lit:
-			b.WriteString(p.Value)
 		case *syntax.SglQuoted:
-			b.WriteString(p.Value)
+			if quoted {
+				return false // not reachable from the parser; refused regardless
+			}
 		case *syntax.DblQuoted:
-			for _, inner := range p.Parts {
-				switch ip := inner.(type) {
-				case *syntax.Lit:
-					b.WriteString(ip.Value)
-				case *syntax.ParamExp:
-					v, ok := boundParam(ip, sc)
-					if !ok {
-						return "", false
-					}
-					b.WriteString(v)
-				default:
-					return "", false
-				}
+			if quoted || p.Dollar || !resolvableParts(p.Parts, sc, true) {
+				return false
 			}
 		case *syntax.ParamExp:
 			v, ok := boundParam(p, sc)
-			if !ok || !unquotedSafe(v) {
-				return "", false
+			if !ok || (!quoted && !unquotedSafe(v)) {
+				return false
 			}
-			b.WriteString(v)
 		default:
-			return "", false
+			return false
 		}
 	}
-	return b.String(), true
+	return true
 }
 
 // exactPath resolves a redirect target to the path bash will open, refusing

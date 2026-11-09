@@ -51,7 +51,7 @@
         env.CGO_ENABLED = "0";
         # Filled in after first build attempt. `nix build` will print the
         # correct hash on the initial failure; paste it here.
-        vendorHash = "sha256-DQS+zZEOz9aJfwZt6Fq5T7Hm1JQK6AJ3IqJqMzC27rU=";
+        vendorHash = "sha256-5vIoqfLYQ32w/a8TvBPJhTBm7rHU7ncL+tcWvmqYAbk=";
         # Install the agent-CLI shims alongside the binary, with the absolute
         # store path of the binary substituted in. A store path rather than a
         # PATH lookup because the shim runs inside pi/omp, whose environment is

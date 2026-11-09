@@ -24,7 +24,11 @@ README.md — this file is for how we work, not what the code is.)
   value *is* by parsing it the way the consuming tool does — `net/url` for a gh
   endpoint, `mvdan/sh` for a command, goawk for an awk program — rather than by
   pattern-matching its text. A regex answers "does it look like X"; the tool acts
-  on what it parses.
+  on what it parses. The sharpest case so far: words were read as source text,
+  and `sort \-o x f`, `$'\x2do'` and `{-o,x}` all hid a write flag until
+  `expand.Fields` supplied bash's own value. Check the parser against bash before
+  trusting it, though: `expand.Literal` keeps `\-o` as `\-o` where bash passes
+  `-o`; only `Fields` matched on every probe.
 - **Build verbosely**: `nix build -L` (streams build logs) over plain `nix build`.
 - **Don't trim output by piping**: avoid `| tail`/`| head` just to shorten output;
   run the plain command. Feed a program's stdin via input redirection
