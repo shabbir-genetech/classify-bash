@@ -1,0 +1,37 @@
+[
+ {
+  "name": "fd: --exec re-added",
+  "file": "internal/engine/commands.go",
+  "old": "\t\t\tflagSpec{Long: \"one-file-system\"},\n",
+  "new": "\t\t\tflagSpec{Long: \"one-file-system\"},\n\t\t\tflagSpec{Short: \"x\", Long: \"exec\", TakesArg: true},\n",
+  "expect": "killed"
+ },
+ {
+  "name": "fd: --exec-batch re-added",
+  "file": "internal/engine/commands.go",
+  "old": "\t\t\tflagSpec{Long: \"one-file-system\"},\n",
+  "new": "\t\t\tflagSpec{Long: \"one-file-system\"},\n\t\t\tflagSpec{Short: \"X\", Long: \"exec-batch\", TakesArg: true},\n",
+  "expect": "killed"
+ },
+ {
+  "name": "fd: --list-details re-added",
+  "file": "internal/engine/commands.go",
+  "old": "\t\t\tflagSpec{Long: \"one-file-system\"},\n",
+  "new": "\t\t\tflagSpec{Long: \"one-file-system\"},\n\t\t\tflagSpec{Short: \"l\", Long: \"list-details\"},\n",
+  "expect": "killed"
+ },
+ {
+  "name": "pgrep: --signal re-added",
+  "file": "internal/engine/commands.go",
+  "old": "\t\t\tflagSpec{Long: \"nslist\", TakesArg: true},\n",
+  "new": "\t\t\tflagSpec{Long: \"nslist\", TakesArg: true},\n\t\t\tflagSpec{Long: \"signal\", TakesArg: true},\n",
+  "expect": "killed"
+ },
+ {
+  "name": "pkill registered as pgrep",
+  "file": "internal/engine/commands.go",
+  "old": "\t\"pgrep\":      pgrepSpec(),\n",
+  "new": "\t\"pgrep\":      pgrepSpec(),\n\t\"pkill\":      pgrepSpec(),\n",
+  "expect": "killed"
+ }
+]

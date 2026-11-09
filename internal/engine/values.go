@@ -61,6 +61,9 @@ func oneOf(words ...string) func(string) bool {
 	}
 }
 
+// whenValue is the common auto|always|never option value (--color, --hyperlink).
+var whenValue = oneOf("auto", "always", "never")
+
 // notURL accepts a value that net/url parses as a bare path reference: no
 // scheme, host, userinfo or opaque part. A value that does not parse is refused.
 // It answers "could a tool read this as a URL?" with the parser such tools use,

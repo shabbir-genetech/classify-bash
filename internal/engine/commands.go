@@ -1211,6 +1211,8 @@ var safeCommands = map[string]*commandSpec{
 
 	"find":       findSpec(),
 	"journalctl": journalctlSpec(),
+	"fd":         fdSpec(),
+	"pgrep":      pgrepSpec(),
 
 	// === Tier D: transparent wrappers (recursive classification) =========
 	// These commands exec the argv after a literal `--` separator. The tail
@@ -1990,7 +1992,7 @@ func jjSpec() *commandSpec {
 		// See DESIGN-jj-global-flags.md.
 		Flags: jjGlobalFlags(),
 		Subcommands: map[string]*commandSpec{
-			"file": jjFileSpec(),
+			"file":      jjFileSpec(),
 			"status":    {Style: styleGNU, AllowAnyPositional: true, Flags: jjCommonFlags()},
 			"st":        {Style: styleGNU, AllowAnyPositional: true, Flags: jjCommonFlags()},
 			"diff":      {Style: styleGNU, AllowAnyPositional: true, Flags: jjCommonFlags()},
@@ -2532,6 +2534,110 @@ func ghFormatFlags() []flagSpec {
 	return flagSet(flags(flagSpec{Long: "json", TakesArg: true}), ghFilterFlags())
 }
 
+// fdSpec is fd's search (flags from fd 10.4's help): the pattern and search paths
+// are positionals. NOT ArgvDataSafe — it has exec flags, which are absent:
+//   - -x/--exec, -X/--exec-batch and --batch-size: run a program per match
+//     (demonstrated by their purpose; --batch-size only applies to -X).
+//   - -l/--list-details: fd runs `ls` on the matches; a fixed program, but still
+//     an exec, refused defensively (no logged demand).
+//
+// --ignore-file reads an ignore file (data); -C/--base-directory only changes
+// where fd searches.
+func fdSpec() *commandSpec {
+	return &commandSpec{
+		Style:              styleGNU,
+		AllowAnyPositional: true,
+		Flags: flags(
+			flagSpec{Short: "H", Long: "hidden"},
+			flagSpec{Short: "I", Long: "no-ignore"},
+			flagSpec{Long: "no-ignore-vcs"},
+			flagSpec{Long: "no-require-git"},
+			flagSpec{Long: "no-ignore-parent"},
+			flagSpec{Short: "u", Long: "unrestricted"},
+			flagSpec{Short: "s", Long: "case-sensitive"},
+			flagSpec{Short: "i", Long: "ignore-case"},
+			flagSpec{Short: "g", Long: "glob"},
+			flagSpec{Long: "regex"},
+			flagSpec{Short: "F", Long: "fixed-strings"},
+			flagSpec{Long: "and", TakesArg: true},
+			flagSpec{Short: "a", Long: "absolute-path"},
+			flagSpec{Short: "L", Long: "follow"},
+			flagSpec{Short: "p", Long: "full-path"},
+			flagSpec{Short: "0", Long: "print0"},
+			flagSpec{Short: "d", Long: "max-depth", TakesArg: true, Value: allDigits},
+			flagSpec{Long: "min-depth", TakesArg: true, Value: allDigits},
+			flagSpec{Long: "exact-depth", TakesArg: true, Value: allDigits},
+			flagSpec{Short: "E", Long: "exclude", TakesArg: true},
+			flagSpec{Long: "prune"},
+			flagSpec{Short: "t", Long: "type", TakesArg: true},
+			flagSpec{Short: "e", Long: "extension", TakesArg: true},
+			flagSpec{Short: "S", Long: "size", TakesArg: true},
+			flagSpec{Long: "changed-within", TakesArg: true},
+			flagSpec{Long: "changed-before", TakesArg: true},
+			flagSpec{Short: "o", Long: "owner", TakesArg: true},
+			flagSpec{Long: "format", TakesArg: true},
+			flagSpec{Long: "ignore-file", TakesArg: true},
+			flagSpec{Short: "c", Long: "color", TakesArg: true, Value: whenValue},
+			flagSpec{Long: "hyperlink", OptionalArg: true, Value: whenValue},
+			flagSpec{Long: "ignore-contain", TakesArg: true},
+			flagSpec{Short: "j", Long: "threads", TakesArg: true, Value: allDigits},
+			flagSpec{Long: "max-results", TakesArg: true, Value: allDigits},
+			flagSpec{Short: "1"},
+			flagSpec{Short: "q", Long: "quiet"},
+			flagSpec{Long: "show-errors"},
+			flagSpec{Short: "C", Long: "base-directory", TakesArg: true},
+			flagSpec{Long: "path-separator", TakesArg: true},
+			flagSpec{Long: "search-path", TakesArg: true},
+			flagSpec{Long: "strip-cwd-prefix", OptionalArg: true, Value: whenValue},
+			flagSpec{Long: "one-file-system"},
+			flagSpec{Short: "h", Long: "help"},
+			flagSpec{Short: "V", Long: "version"},
+		),
+	}
+}
+
+// pgrepSpec lists processes (procps-ng 4.0). pkill, its signalling twin, is
+// absent. Out for no logged demand, refused defensively: --signal (pkill's
+// option), -F/--pidfile and -L/--logpidfile (read and lock-check a file), and
+// --env (matches other processes' environments). NOT ArgvDataSafe.
+func pgrepSpec() *commandSpec {
+	return &commandSpec{
+		Style:              styleGNU,
+		AllowAnyPositional: true,
+		Flags: flags(
+			flagSpec{Short: "d", Long: "delimiter", TakesArg: true},
+			flagSpec{Short: "l", Long: "list-name"},
+			flagSpec{Short: "a", Long: "list-full"},
+			flagSpec{Long: "quiet"},
+			flagSpec{Short: "v", Long: "inverse"},
+			flagSpec{Short: "w", Long: "lightweight"},
+			flagSpec{Short: "c", Long: "count"},
+			flagSpec{Short: "f", Long: "full"},
+			flagSpec{Short: "g", Long: "pgroup", TakesArg: true},
+			flagSpec{Short: "G", Long: "group", TakesArg: true},
+			flagSpec{Short: "i", Long: "ignore-case"},
+			flagSpec{Short: "n", Long: "newest"},
+			flagSpec{Short: "o", Long: "oldest"},
+			flagSpec{Short: "O", Long: "older", TakesArg: true, Value: allDigits},
+			flagSpec{Short: "p", Long: "pid", TakesArg: true},
+			flagSpec{Short: "P", Long: "parent", TakesArg: true},
+			flagSpec{Short: "s", Long: "session", TakesArg: true},
+			flagSpec{Short: "t", Long: "terminal", TakesArg: true},
+			flagSpec{Short: "u", Long: "euid", TakesArg: true},
+			flagSpec{Short: "U", Long: "uid", TakesArg: true},
+			flagSpec{Short: "x", Long: "exact"},
+			flagSpec{Short: "r", Long: "runstates", TakesArg: true},
+			flagSpec{Short: "A", Long: "ignore-ancestors"},
+			flagSpec{Short: "Q", Long: "shell-quote"},
+			flagSpec{Long: "cgroup", TakesArg: true},
+			flagSpec{Long: "ns", TakesArg: true},
+			flagSpec{Long: "nslist", TakesArg: true},
+			flagSpec{Short: "h", Long: "help"},
+			flagSpec{Short: "V", Long: "version"},
+		),
+	}
+}
+
 // ghPRSpec whitelists the read-only `gh pr view|diff|list|checks` (flags from gh
 // 2.102's help). The mutating siblings — create, merge, edit, close, reopen,
 // comment, review, ready, checkout, lock, unlock, update-branch, revert — are
@@ -2550,7 +2656,7 @@ func ghPRSpec() *commandSpec {
 		Subcommands: map[string]*commandSpec{
 			"view": ghPRSelected(ghFormatFlags(), flags(flagSpec{Short: "c", Long: "comments"})),
 			"diff": ghPRSelected(flags(
-				flagSpec{Long: "color", TakesArg: true, Value: oneOf("always", "never", "auto")},
+				flagSpec{Long: "color", TakesArg: true, Value: whenValue},
 				flagSpec{Short: "e", Long: "exclude", TakesArg: true},
 				flagSpec{Long: "name-only"},
 				flagSpec{Long: "patch"},

@@ -369,6 +369,16 @@ func TestMustAllow(t *testing.T) {
 		"gh pr list -R o/r --state merged -L 5 --json number,title",
 		"gh pr list --search 'is:open review:required' --author @me",
 		"gh pr checks 7 -R o/r --required",
+		// fd search, pgrep listing
+		"fd -a foo /tmp",
+		"fd -t f -e go . src",
+		"fd -HI --color=never -E .git pattern",
+		"fd -g '*.md' -d 2 --strip-cwd-prefix=always",
+		"fd -tf -uu --max-results 5 needle",
+		"pgrep -a nixos-rebuild",
+		"pgrep -af '^/nix/store/.*/code'",
+		"pgrep -x code",
+		"pgrep -c -u demo bash",
 
 		// §8 permutation guard: a *whitelisted* flag after a positional still allows
 		// (no regression for the common "flag after a revision/arg" idiom).
@@ -594,7 +604,7 @@ func TestMustNotAllow(t *testing.T) {
 		`jj file show --config 'ui.pager=["sh","-c","touch /tmp/x"]' f`,
 		`jj --config-file /tmp/evil.toml file list`,
 		`jj file show -r "$(echo @)" f`, // substituted revision
-		"jj file", // no subcommand
+		"jj file",                       // no subcommand
 		// --config-toml: removed in jj 0.41, but the same config-injection class
 		// as --config (ui.pager is spawned by these very subcommands). Kept out on
 		// the class, not on the version accident.
@@ -753,7 +763,7 @@ func TestMustNotAllow(t *testing.T) {
 		`echo "${?:-$(touch /tmp/x)}"`,
 		`echo "${?/0/$(touch /tmp/x)}"`,
 		`echo "${?:0:$(touch /tmp/x)}"`,
-		`echo "${?[$(touch /tmp/x)]}"`, // mvdan/sh refuses to parse this today; exitStatusParam's Index check is the lock if it ever stops
+		`echo "${?[$(touch /tmp/x)]}"`,     // mvdan/sh refuses to parse this today; exitStatusParam's Index check is the lock if it ever stops
 		`sort --output="$?" /etc/hostname`, // an opaque value never feeds a flag
 		`echo "$?" > /etc/passwd`,          // nor masks a write redirect
 		`x="$?"; ls "$x"`,                  // nor binds a variable
@@ -792,20 +802,20 @@ func TestMustNotAllow(t *testing.T) {
 		"gh api user --hostname gh.example",     // sends GH_ENTERPRISE_TOKEN to that host
 		"gh api --hostname gh.example user",     // same, before the endpoint
 		// A repository or endpoint that names a host: gh sends credentials there.
-		"gh repo view gh.example/o/r",          // HOST/OWNER/REPO positional
-		"gh repo view git@gh.example:o/r",      // ssh-style
-		"gh repo view https://gh.example/o/r",  // URL
-		"gh repo view HTTPS://gh.example/o/r",  // URL, any case
-		"gh repo view --repo=gh.example/o/r",   // each place a flag value is read:
-		"gh repo view --repo gh.example/o/r",   //   --f v
-		"gh repo view -R gh.example/o/r",       //   -f v
-		"gh repo view -Rgh.example/o/r",        //   -fv
-		"gh repo view o/r -R gh.example/o/r",   //   after a valid positional
-		"gh api https://gh.example/x",          // absolute URL endpoint
-		"gh api HTTPS://gh.example/x",          // any case
-		"gh api //gh.example/x",                // parsed host, refused defensively
-		"gh api 'repos/o/r?x=\\@gh.example'",   // outside the character set
-		"gh repo view \"$(echo o/r)\"",         // an unseen positional is never checked, so refused
+		"gh repo view gh.example/o/r",         // HOST/OWNER/REPO positional
+		"gh repo view git@gh.example:o/r",     // ssh-style
+		"gh repo view https://gh.example/o/r", // URL
+		"gh repo view HTTPS://gh.example/o/r", // URL, any case
+		"gh repo view --repo=gh.example/o/r",  // each place a flag value is read:
+		"gh repo view --repo gh.example/o/r",  //   --f v
+		"gh repo view -R gh.example/o/r",      //   -f v
+		"gh repo view -Rgh.example/o/r",       //   -fv
+		"gh repo view o/r -R gh.example/o/r",  //   after a valid positional
+		"gh api https://gh.example/x",         // absolute URL endpoint
+		"gh api HTTPS://gh.example/x",         // any case
+		"gh api //gh.example/x",               // parsed host, refused defensively
+		"gh api 'repos/o/r?x=\\@gh.example'",  // outside the character set
+		"gh repo view \"$(echo o/r)\"",        // an unseen positional is never checked, so refused
 		// gh pr: browser launches, host-naming selectors, mutating siblings.
 		"gh pr view 1 --web",
 		"gh pr view 1 -R o/r -w",
@@ -826,6 +836,22 @@ func TestMustNotAllow(t *testing.T) {
 		"gh pr review 1 --approve",
 		"gh pr ready 1",
 		"gh pr diff 1 --allow-escape-sequences",
+		// fd: every exec path, in every position a flag can take.
+		"fd -x rm",
+		"fd foo -x rm {}", // after the pattern
+		"fd --exec rm",
+		"fd -X rm",
+		"fd --exec-batch rm",
+		"fd -Hx rm", // clustered
+		"fd foo --batch-size 1 -X rm",
+		"fd -l foo", // runs ls
+		"fd --list-details foo",
+		"fd --bogus-flag foo",
+		// pgrep: pkill is the signalling twin; the defensive exclusions hold.
+		"pkill -f foo",
+		"pgrep --signal KILL foo",
+		"pgrep -F /tmp/pidfile",
+		"pgrep --bogus-flag foo",
 
 		// Unquoted heredoc bodies are EXPANDED by bash: these ran arbitrary commands
 		// and classified Allow until 2026-10-23 (the body was never inspected).
@@ -898,7 +924,7 @@ func TestNotYetAllowed(t *testing.T) {
 		// Read-only jj subcommands with no spec yet; the -R global flag now
 		// parses, but the subcommand lookup still misses.
 		"jj -R /tmp config list",
-		"jj file annotate f", // read-only, no logged demand
+		"jj file annotate f",      // read-only, no logged demand
 		`find . -name "$(ls)"`,    // -name PATTERN is a read-only predicate (a flag argument)
 		`head -n "$(ls)" file`,    // -n COUNT on an ArgvDataSafe reader; substituted flag arg
 		"echo \"$(ls `whoami`)\"", // inner is read-only, but uses an unquoted backquote subst
@@ -940,7 +966,7 @@ func TestNotYetAllowed(t *testing.T) {
 		`cd "$?"`,
 		`echo "${#?}"`, // operator forms that happen to be harmless are still refused
 		`echo "${!?}"`,
-		`echo "$#"`,    // so are the other special parameters
+		`echo "$#"`, // so are the other special parameters
 		`echo "$$"`,
 		// gh endpoints outside the defensive character set: harmless, but a form
 		// the host check did not anticipate is refused rather than reasoned about.
