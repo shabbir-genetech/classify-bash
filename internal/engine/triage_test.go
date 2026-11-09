@@ -317,25 +317,38 @@ func blameCmd(cmd syntax.Command, sc *scope) string {
 	case *syntax.BinaryCmd:
 		// Descend only into the side that actually fails, in the scope the
 		// classifier gave it.
+		// Mirror classifyCmd's scopes exactly, through sub, so a name forgotten
+		// after one side is forgotten here too.
+		tag := ""
 		if c.Op == syntax.AndStmt {
-			chain := sc.child()
-			if !classifyAndChain(c.X, chain) {
-				return blameStmt(c.X, chain)
-			}
-			return blameStmt(c.Y, chain)
+			sc.sub(func(chain *scope) bool {
+				if !classifyAndChain(c.X, chain) {
+					tag = blameStmt(c.X, chain)
+				} else {
+					tag = blameStmt(c.Y, chain)
+				}
+				return true
+			})
+			return tag
 		}
-		if !classifyStmtBind(c.X, sc.child()) {
-			return blameStmt(c.X, sc.child())
+		if sc.sub(func(x *scope) bool { return classifyStmtBind(c.X, x) }) {
+			sc.sub(func(y *scope) bool { tag = blameStmt(c.Y, y); return true })
+		} else {
+			sc.sub(func(x *scope) bool { tag = blameStmt(c.X, x); return true })
 		}
-		return blameStmt(c.Y, sc.child())
+		return tag
 	case *syntax.Subshell:
-		inner := sc.child()
-		for _, s := range c.Stmts {
-			if !classifyStmtBind(s, inner) {
-				return blameStmt(s, inner)
+		tag := "<empty subshell>"
+		sc.sub(func(inner *scope) bool {
+			for _, s := range c.Stmts {
+				if !classifyStmtBind(s, inner) {
+					tag = blameStmt(s, inner)
+					return false
+				}
 			}
-		}
-		return "<empty subshell>"
+			return true
+		})
+		return tag
 	case *syntax.ForClause:
 		return "<for/while loop>"
 	case *syntax.WhileClause:

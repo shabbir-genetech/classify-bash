@@ -1,0 +1,30 @@
+[
+ {
+  "name": "sub: forgetting disabled",
+  "file": "internal/engine/classify.go",
+  "old": "\t\t\tdelete(s.vars, k)\n",
+  "new": "\t\t\t_ = k\n",
+  "expect": "killed"
+ },
+ {
+  "name": "sub: only new names forgotten",
+  "file": "internal/engine/classify.go",
+  "old": "if old, bound := s.vars[k]; !bound || old != v {",
+  "new": "if old, bound := s.vars[k]; !bound && old != v {",
+  "expect": "killed"
+ },
+ {
+  "name": "&& chain bypasses sub",
+  "file": "internal/engine/classify.go",
+  "old": "\t\t\treturn sc.sub(func(chain *scope) bool {\n\t\t\t\treturn classifyAndChain(c.X, chain) && classifyAndChain(c.Y, chain)\n\t\t\t})",
+  "new": "\t\t\tchain := sc.child()\n\t\t\treturn classifyAndChain(c.X, chain) && classifyAndChain(c.Y, chain)",
+  "expect": "killed"
+ },
+ {
+  "name": "|| side bypasses sub",
+  "file": "internal/engine/classify.go",
+  "old": "\t\t\treturn sc.sub(func(x *scope) bool { return classifyStmtBind(c.X, x) }) &&\n\t\t\t\tsc.sub(func(y *scope) bool { return classifyStmtBind(c.Y, y) })",
+  "new": "\t\t\treturn classifyStmtBind(c.X, sc.child()) && classifyStmtBind(c.Y, sc.child())",
+  "expect": "killed"
+ }
+]

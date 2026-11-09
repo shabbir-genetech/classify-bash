@@ -759,6 +759,13 @@ func TestMustNotAllow(t *testing.T) {
 		`echo "$(ls)$(rm x)"`,               // two substitutions in one word, one unsafe
 		`sort --output="$(ls)"`,             // substituted value feeds a write flag → write
 		`cat "$(ls)" > /etc/passwd`,         // redirect write not masked by the substitution
+		// A rebinding inside a conditional scope must not leave the OLD value checked:
+		// bash keeps it when the chain succeeds (&&) or the left side fails (||), and
+		// these wrote /etc/passwd while classifying allow until 2026-11-09.
+		`S=/dev/null; true && S=/etc/passwd; echo x > "$S"`,
+		`S=/dev/null; ls && S=/etc/passwd; echo x > "$S"`,
+		`S=/dev/null; false || S=/etc/passwd; echo x > "$S"`,
+		`S=/dev/null; ls && { true && S=/etc/passwd; }; echo x > "$S"`,
 		// "$?" is opaque only in its plain form: each operator below can run a command.
 		`echo "${?:-$(touch /tmp/x)}"`,
 		`echo "${?/0/$(touch /tmp/x)}"`,
@@ -960,6 +967,11 @@ func TestNotYetAllowed(t *testing.T) {
 		// journalctl follow: read-only but never terminates; -f excluded for v1.
 		"journalctl -f",
 
+		// Rebindings bash really does discard (a subshell, a pipe stage, a $(…)):
+		// harmless, but the name is forgotten like any other child-scope binding.
+		`S=/dev/null; (S=/etc/passwd); echo x > "$S"`,
+		`S=/dev/null; ls | S=/etc/passwd; echo x > "$S"`,
+		`S=/dev/null; echo "$(S=/etc/passwd; echo)"; echo x > "$S"`,
 		// "$?" outside the one accepted form: harmless, but unquoted it could split
 		// under an odd IFS, and cd is not ArgvDataSafe.
 		`echo $?`,

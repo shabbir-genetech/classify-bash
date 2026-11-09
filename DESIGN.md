@@ -544,11 +544,22 @@ properties:
   unquoted *use* must not word-split or glob. Where text and meaning can differ, the
   binding is refused, not approximated.
 - **The binding is believed only where bash made it.** A statement list binds for
-  what follows; an `&&` chain binds along the chain and no further (an earlier link
-  may have failed); `||` branches and pipeline stages are isolated (conditional,
-  subshell); `( … )` and `"$(…)"` inherit but never leak. Every one of those
-  conservative choices is a wall case where the leak would aim a scratchpad write
-  at a different file, plus a `TestNotYetAllowed` case where it is merely harmless.
+  what follows; an `&&` chain binds along the chain; `||` branches and pipeline
+  stages are isolated (conditional, subshell); `( … )` and `"$(…)"` inherit. Every
+  one of those is a wall case where a leak would aim a scratchpad write at a
+  different file, plus a `TestNotYetAllowed` case where it is merely harmless.
+- **What a child scope bound is forgotten after it, not merely dropped (fixed
+  2026-11-09).** Dropping looked conservative and was not: in
+  `S=/dev/null; true && S=/etc/passwd; echo x > "$S"` the redirect was checked
+  against the *old* `/dev/null` while bash, the chain having succeeded, wrote
+  `/etc/passwd`; `false || S=…` had the same hole. Whether bash kept a binding made
+  past the end of an `&&` chain or in a `||` branch depends on what ran, which the
+  classifier cannot know, so every name a child scope bound or rebound becomes
+  **unbound** in the parent and a later use falls through. Every child scope goes
+  through `scope.sub`, so no call site can drop instead of forget. Replays: 0 of
+  20,842 logged commands and 0 of 22,151 transcript commands (all since
+  2026-10-08, so the whole life of §6) changed decision — the fix costs no
+  acceleration, and no agent command ever used the hole.
 - **The assignment does nothing else.** Assigning an *exported* name changes every
   later child's environment — `HOME=…; git log` reads another `.gitconfig`, whose
   pager is a program. So only 1–3-character names are bindable, minus a reserved

@@ -30,13 +30,33 @@ func newScope(h Host) *scope {
 }
 
 // child copies the bindings for a construct bash runs in a subshell or runs
-// conditionally: it sees what is bound now, and nothing it binds escapes.
+// conditionally: it sees what is bound now. Use it through sub, never alone.
 func (s *scope) child() *scope {
 	c := &scope{vars: make(map[string]string, len(s.vars)), host: s.host}
 	for k, v := range s.vars {
 		c.vars[k] = v
 	}
 	return c
+}
+
+// sub classifies f in a child scope of s, then forgets in s every name the child
+// bound or rebound. Whether bash kept such a binding depends on what ran — an &&
+// chain keeps it only if every link succeeded, the right side of || only runs
+// if the left failed — and the classifier cannot know, so the name becomes
+// UNBOUND and any later use falls through. Merely dropping the child's bindings
+// is not conservative: `S=/dev/null; true && S=/etc/passwd; echo x > "$S"` left
+// S checked as /dev/null while bash wrote /etc/passwd (fixed 2026-11-09).
+// Forgetting is also safe where bash does discard (a subshell, a pipe stage, a
+// `$(…)`): it only turns a later use into a prompt.
+func (s *scope) sub(f func(*scope) bool) bool {
+	c := s.child()
+	ok := f(c)
+	for k, v := range c.vars {
+		if old, bound := s.vars[k]; !bound || old != v {
+			delete(s.vars, k)
+		}
+	}
+	return ok
 }
 
 // classifyCommandIn parses cmd as bash and returns decisionAllow only when every
@@ -117,14 +137,16 @@ func classifyCmd(cmd syntax.Command, sc *scope) bool {
 		switch c.Op {
 		case syntax.AndStmt:
 			// The right side runs only if everything to its left succeeded, so
-			// bindings flow along an && chain. They stop at the end of it: if an
-			// earlier link failed, a later assignment never ran.
-			chain := sc.child()
-			return classifyAndChain(c.X, chain) && classifyAndChain(c.Y, chain)
+			// bindings flow along an && chain. Past its end they are unknown (they
+			// hold only if every link succeeded), which sub turns into unbound.
+			return sc.sub(func(chain *scope) bool {
+				return classifyAndChain(c.X, chain) && classifyAndChain(c.Y, chain)
+			})
 		case syntax.OrStmt, syntax.Pipe, syntax.PipeAll:
 			// || runs its right side only when the left FAILED, and each pipeline
 			// stage is its own subshell, so neither side sees the other's bindings.
-			return classifyStmtBind(c.X, sc.child()) && classifyStmtBind(c.Y, sc.child())
+			return sc.sub(func(x *scope) bool { return classifyStmtBind(c.X, x) }) &&
+				sc.sub(func(y *scope) bool { return classifyStmtBind(c.Y, y) })
 		default:
 			failLoud("unknown binary op: %v", c.Op)
 			return false // unreachable
@@ -133,7 +155,7 @@ func classifyCmd(cmd syntax.Command, sc *scope) bool {
 		// ( … ) — recurse into the inner statements. Each must classify safe
 		// on its own; same rule as && / ||. Parens are just a scope boundary,
 		// not a bypass: bindings come in, none go out.
-		return classifyStmts(c.Stmts, sc.child())
+		return sc.sub(func(in *scope) bool { return classifyStmts(c.Stmts, in) })
 	case *syntax.Block,
 		*syntax.IfClause, *syntax.ForClause, *syntax.WhileClause, *syntax.CaseClause,
 		*syntax.FuncDecl, *syntax.LetClause, *syntax.TimeClause, *syntax.CoprocClause,
@@ -320,7 +342,7 @@ func wordQuotedSubst(w *syntax.Word, sc *scope) bool {
 					}
 				case *syntax.CmdSubst:
 					// A substitution is a subshell: it sees our bindings, keeps its own.
-					if !classifyCmdSubst(ip, sc.child()) {
+					if !sc.sub(func(in *scope) bool { return classifyCmdSubst(ip, in) }) {
 						return false
 					}
 					sawSubst = true
