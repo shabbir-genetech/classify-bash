@@ -110,10 +110,10 @@ Reading in this order is the fastest way to understand one event end to end:
   node or binary operator calls `failLoud`. `wordLiteral` (still used for the
   command name, which must stay literal) rejects any expansion; `resolveWord` is
   `wordLiteral` plus bound `$VAR`. `argTokens` classifies each operand as a literal
-  or — the one allowed expansion — a quoted `"$(...)"` command substitution whose
-  inner command classifies read-only (`wordQuotedSubst`/`classifyCmdSubst`); that
-  token reaches a spec only as an opaque positional, only for an `ArgvDataSafe`
-  command. `safeRedirect` allows reads, writes to `/dev/null`, and writes of a data
+  or as an opaque token, the one allowed kind of unseen value: a quoted `"$(...)"`
+  whose inner command classifies read-only (`wordQuotedSubst`/`classifyCmdSubst`),
+  or a quoted plain `"$?"` (`exitStatusParam`). That token reaches a spec only as an
+  opaque positional, only for an `ArgvDataSafe` command. `safeRedirect` allows reads, writes to `/dev/null`, and writes of a data
   file into the scratchpad; it inspects heredoc **bodies** (an unquoted one is
   expanded by bash) and rejects `{name}>`.
 - **`internal/engine/vars.go`** — literal-bound variables (FUTURE-WORK §6): which

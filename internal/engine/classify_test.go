@@ -318,6 +318,11 @@ func TestMustAllow(t *testing.T) {
 		"echo \"`ls`\"",                         // backquote spelling of $(...), read-only inner
 		`echo "$(ls && cat /etc/hostname)"`,     // compound inner, every stage read-only
 		`echo "$(cat /etc/hostname | head -1)"`, // inner pipeline, every stage whitelisted
+		// A plain "$?" is an opaque operand, like a substitution's output.
+		`echo "exit $?"`,
+		`ls; echo "exit $?"`,
+		`cat /etc/hostname && echo "rc=${?}"`,
+		`echo "$?"`,
 
 		// journalctl: read-only journal queries.
 		"journalctl -t classify-bash --no-pager",
@@ -717,6 +722,14 @@ func TestMustNotAllow(t *testing.T) {
 		`echo "$(ls)$(rm x)"`,               // two substitutions in one word, one unsafe
 		`sort --output="$(ls)"`,             // substituted value feeds a write flag → write
 		`cat "$(ls)" > /etc/passwd`,         // redirect write not masked by the substitution
+		// "$?" is opaque only in its plain form: each operator below can run a command.
+		`echo "${?:-$(touch /tmp/x)}"`,
+		`echo "${?/0/$(touch /tmp/x)}"`,
+		`echo "${?:0:$(touch /tmp/x)}"`,
+		`echo "${?[$(touch /tmp/x)]}"`, // mvdan/sh refuses to parse this today; exitStatusParam's Index check is the lock if it ever stops
+		`sort --output="$?" /etc/hostname`, // an opaque value never feeds a flag
+		`echo "$?" > /etc/passwd`,          // nor masks a write redirect
+		`x="$?"; ls "$x"`,                  // nor binds a variable
 
 		// journalctl — destructive / management flags must keep falling through. The
 		// `<match> --vacuum-size` forms guard the post-positional-flag hazard that is
@@ -875,6 +888,14 @@ func TestNotYetAllowed(t *testing.T) {
 		// journalctl follow: read-only but never terminates; -f excluded for v1.
 		"journalctl -f",
 
+		// "$?" outside the one accepted form: harmless, but unquoted it could split
+		// under an odd IFS, and cd is not ArgvDataSafe.
+		`echo $?`,
+		`cd "$?"`,
+		`echo "${#?}"`, // operator forms that happen to be harmless are still refused
+		`echo "${!?}"`,
+		`echo "$#"`,    // so are the other special parameters
+		`echo "$$"`,
 		// gh endpoints outside the defensive character set: harmless, but a form
 		// the host check did not anticipate is refused rather than reasoned about.
 		"gh api 'search/issues?q=a%20b'",

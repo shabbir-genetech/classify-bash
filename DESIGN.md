@@ -484,10 +484,11 @@ gates command substitution (next section).
 The same stdin→argv hazard appears in `$(...)`: the inner command runs, and its
 *output* becomes an operand of the outer command — data we cannot see at classify
 time. So command substitution reuses the `ArgvDataSafe` gate. `wordLiteral` still
-rejects every expansion; `argTokens` then admits exactly one extra shape, a
-**quoted** `"$(...)"` whose inner command classifies read-only
+rejects every expansion; `argTokens` then admits one extra shape, a **quoted**
+`"$(...)"` whose inner command classifies read-only
 (`wordQuotedSubst`/`classifyCmdSubst`, recursing through `classifyStmt` like a pipe
-stage). Rules, all fail-closed:
+stage) — and, through the same channel, a quoted plain `"$?"` (below). Rules, all
+fail-closed:
 
 - The substitution must be **double-quoted** — bare `$(...)` word-splits and globs
   into an unknown number of argv words; quoting pins it to one operand.
@@ -512,6 +513,18 @@ one accelerates, one prompts — but the rule "flag arguments must be literal" o
 bites the separate-token shape. For a *non*-`ArgvDataSafe` command the embedded form
 is correctly rejected (`sort --output="$(ls)"` → the opaque positional fails the
 `ArgvDataSafe` check), which is the case that actually matters for safety.
+
+**`"$?"` rides the same channel (2026-11-09).** The previous command's exit status
+is a value the classifier cannot see, exactly like a substitution's output, but it
+runs nothing and is always a decimal 0–255. So a word whose only expansion is a
+plain `$?` / `${?}` inside double quotes is an opaque operand under the rules
+above: `echo "exit $?"` accelerates, `sort --output="$?"` and `cd "$?"` do not.
+`exitStatusParam` checks every field of the `ParamExp`, so every operator form is
+refused — `${?:-$(cmd)}`, `${?/x/$(cmd)}` and `${?:0:$(cmd)}` would RUN `cmd`.
+Unquoted `$?`, the harmless operator forms (`${#?}`) and the other special
+parameters stay out (`TestNotYetAllowed`). It is the single most frequent blocker
+measured after literal-bound variables: an agent ends a command with
+`echo "exit $?"`.
 
 A `--`-leniency tier (admitting commands like `sort` after a literal `--`) is
 designed but deferred — see [FUTURE-WORK.md](FUTURE-WORK.md).

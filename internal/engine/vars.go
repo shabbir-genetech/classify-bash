@@ -95,6 +95,18 @@ func boundParam(p *syntax.ParamExp, sc *scope) (string, bool) {
 	return v, ok
 }
 
+// exitStatusParam reports whether p is a plain `$?` / `${?}`: the previous
+// command's exit status, always a decimal 0–255 that the classifier cannot see.
+// Its only use is as an OPAQUE operand (wordQuotedSubst), the channel a quoted
+// `$(…)` already uses: a positional of an ArgvDataSafe command, nothing else.
+// Every field of ParamExp is checked, so every operator form is refused —
+// `${?:-$(cmd)}` and `${?/x/$(cmd)}` would RUN cmd.
+func exitStatusParam(p *syntax.ParamExp) bool {
+	return p != nil && p.Param != nil && p.Param.Value == "?" &&
+		!p.Excl && !p.Length && !p.Width &&
+		p.Index == nil && p.Slice == nil && p.Repl == nil && p.Names == 0 && p.Exp == nil
+}
+
 // unquotedSafe reports whether an unquoted expansion of v yields exactly one
 // word equal to v: non-empty (an empty unquoted expansion removes the word),
 // no IFS whitespace (no splitting) and no glob or extglob opener (no pathname

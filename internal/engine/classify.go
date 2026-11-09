@@ -286,12 +286,12 @@ func argTokens(ws []*syntax.Word, sc *scope) ([]argToken, bool) {
 }
 
 // wordQuotedSubst reports whether w is a "quoted-substitution" word: literal text
-// plus one or more `$(...)` command substitutions that appear ONLY inside double
-// quotes, where every substitution's inner command classifies read-only safe. A
-// bare (unquoted) `$(...)`, or any `$VAR` / `$((...))` / `<(...)` / extglob
-// anywhere, makes it not a quoted-substitution word. Requiring double quotes pins
-// the expansion to a single argv operand (no word-splitting, no globbing), so it
-// can never inject extra argv words.
+// plus one or more `$(...)` command substitutions — or a plain `$?` — that appear
+// ONLY inside double quotes, where every substitution's inner command classifies
+// read-only safe. A bare (unquoted) `$(...)` or `$?`, or any other unbound `$VAR`
+// / `$((...))` / `<(...)` / extglob anywhere, makes it not a quoted-substitution
+// word. Requiring double quotes pins the expansion to a single argv operand (no
+// word-splitting, no globbing), so it can never inject extra argv words.
 func wordQuotedSubst(w *syntax.Word, sc *scope) bool {
 	if w == nil {
 		return false
@@ -307,6 +307,12 @@ func wordQuotedSubst(w *syntax.Word, sc *scope) bool {
 				case *syntax.Lit:
 					// Literal text within the quotes — fine.
 				case *syntax.ParamExp:
+					if exitStatusParam(ip) {
+						// An exit status we cannot see: opaque, exactly like a
+						// substitution's output (see exitStatusParam).
+						sawSubst = true
+						continue
+					}
 					// A bound variable is literal text here; the token is opaque
 					// anyway, so its value does not matter, only that it is bound.
 					if _, ok := boundParam(ip, sc); !ok {
