@@ -672,16 +672,35 @@ nothing *itself*; it just names the program that does.
    format-flag spot-check. Expect a low but non-zero yield — `git` looked clean
    twice before `--textconv` turned up.
 
-   **`gh` walked 2026-11-09 — one finding, removed.** Every value-taking flag, by
-   subcommand: `--json`, `-R/--repo`, `-b/--branch` and `--cache` are data;
-   `--template` is gh's Go template (data only); `--jq` is gh's built-in jq, which
-   can read `$ENV` — no more than the whitelisted `printenv` already shows.
-   **`gh api --hostname` was a credential leak:** with `GH_ENTERPRISE_TOKEN` set, gh
-   sent `Authorization: token …` to whatever host was named (confirmed with
-   `GH_DEBUG=api` against an unresolvable `.invalid` host). It is a new shape for
-   this audit: not a program, but **a value that decides where a credential is
-   sent**. Add "host/URL/remote" values to the questions asked of every flag.
-   `gh auth status -h` stays: it made no request for an unconfigured host.
+   **`gh` walked 2026-11-09 — the shipped spec leaked credentials, fixed.** Every
+   value-taking flag and positional, by subcommand: `--json`, `-b/--branch` and
+   `--cache` are data; `--template` is gh's Go template (data only); `--jq` is gh's
+   built-in jq, which can read `$ENV`, no more than the whitelisted `printenv`
+   shows. **Three arguments named a host, and gh sent `Authorization: token …`
+   there** when `GH_ENTERPRISE_TOKEN` was set (`GH_DEBUG=api`, an unresolvable
+   `.invalid` host, so nothing left the machine):
+   - `gh api --hostname <host>` — removed.
+   - `gh repo view` / `-R`: a repository written `HOST/o/r`, `git@HOST:o/r`, or an
+     `http(s)://` URL in any case. Now `ghRepoName`: exactly `OWNER/REPO`.
+   - `gh api <endpoint>`: an absolute URL. Now `ghEndpoint`: parsed by `net/url`
+     and refused if it has a scheme, host, userinfo or opaque part, AND inside a
+     positive character set.
+
+   That needed an engine hook the matchers lacked: `flagSpec.Value` and
+   `commandSpec.Positional` (`spec.go`), checked wherever matchGNU reads a value,
+   with `TestSpecInvariants` failing on a field set where no matcher would consult
+   it. It is a new shape for this audit: not a program, but **a value that decides
+   where a credential goes**. "Is this value a host, URL or remote?" is now one of
+   the questions (README "Extending the whitelist", step 2). `gh auth status -h`
+   stays: it made no request for an unconfigured host.
+
+   Mutation pass: every value site and each predicate wired into a spec is killed
+   by a `TestMustNotAllow` case. Four survivors are deliberate second locks behind
+   a first — the scheme check (a scheme needs `:`, which the character set already
+   refuses), the slash requirement (no slash leaves an empty, failing segment),
+   `Positional`'s refusal of an unseen operand (a non-`ArgvDataSafe` spec refuses
+   it first), and the `Value` check on the `DashValueOK` path (no spec combines the
+   two yet).
 2. **Sibling-subcommand check.** The `--textconv` miss came from testing a flag
    on `git log`/`git blame` (where it is not whitelisted) and concluding "git is
    clean" — it was whitelisted on `cat-file` and `grep`. Any audit must walk the

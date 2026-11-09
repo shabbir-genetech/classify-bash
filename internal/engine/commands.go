@@ -2476,12 +2476,13 @@ func ghRepoViewSpec() *commandSpec {
 	return &commandSpec{
 		Style:              styleGNU,
 		AllowAnyPositional: true,
+		Positional:         ghRepoName,
 		Flags: []flagSpec{
 			{Long: "json", TakesArg: true},
 			{Short: "q", Long: "jq", TakesArg: true},
 			{Short: "t", Long: "template", TakesArg: true},
 			{Short: "b", Long: "branch", TakesArg: true},
-			{Short: "R", Long: "repo", TakesArg: true},
+			{Short: "R", Long: "repo", TakesArg: true, Value: ghRepoName},
 			{Long: "help"},
 		},
 	}
@@ -2506,6 +2507,7 @@ func ghApiSpec() *commandSpec {
 	return &commandSpec{
 		Style:              styleGNU,
 		AllowAnyPositional: true,
+		Positional:         ghEndpoint,
 		Flags: []flagSpec{
 			{Long: "cache", TakesArg: true},
 			{Long: "paginate"},

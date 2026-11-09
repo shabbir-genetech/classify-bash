@@ -127,6 +127,9 @@ Reading in this order is the fastest way to understand one event end to end:
 - **`internal/engine/spec.go`** — `commandSpec` + the five `flagStyle` matchers (`matchGNU`,
   `matchFind`, `matchWrapper`, `matchXargs`, `matchAwk`). This is the
   flag/subcommand/positional engine; the data it runs on lives in `commands.go`.
+  `flagSpec.Value` and `commandSpec.Positional` constrain a *value* (matchGNU
+  only; `TestSpecInvariants` fails if either is set where it would not be
+  consulted); the gh host checks they carry are in `ghvalues.go`.
   `matchXargs` is the odd one out: no `--` separator (the first non-flag token is
   the wrapped command) and it recurses via `classifyWrapped`, which only accepts a
   command whose spec sets `ArgvDataSafe` — see the privacy/safety note below and

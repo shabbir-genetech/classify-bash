@@ -7,6 +7,18 @@ README.md — this file is for how we work, not what the code is.)
 
 ## Working preferences
 
+- **Fail closed, defensively (owner, 2026-11-09).** It is better to fail in an
+  expected situation than not to fail in an unexpected one: a wrong rejection costs
+  a prompt, a wrong allow costs the property this tool exists for. Layer checks
+  (a parser *and* a positive character set), refuse what does not parse, and add a
+  structural test where a field could be set but never consulted
+  (`TestSpecInvariants`). A mutation survivor that is a deliberate second lock is
+  fine; say which lock covers it.
+- **Prefer a parser to a regex where feasible (owner, 2026-11-09).** Decide what a
+  value *is* by parsing it the way the consuming tool does — `net/url` for a gh
+  endpoint, `mvdan/sh` for a command, goawk for an awk program — rather than by
+  pattern-matching its text. A regex answers "does it look like X"; the tool acts
+  on what it parses.
 - **Build verbosely**: `nix build -L` (streams build logs) over plain `nix build`.
 - **Don't trim output by piping**: avoid `| tail`/`| head` just to shorten output;
   run the plain command. Feed a program's stdin via input redirection

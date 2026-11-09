@@ -57,6 +57,19 @@ type flagSpec struct {
 	// flag. Do not set it on a TakesArg flag (the value is consumed there anyway),
 	// and do not widen it to non-numeric values without re-deriving that argument.
 	DashValueOK bool
+
+	// Value, when non-nil, must accept the flag's value however it is written —
+	// `--name=v`, `--name v`, `-nv`, `-n v`. It exists for values that are names of
+	// something the tool acts on with side effects the flag name does not show: a
+	// gh repository may carry a HOST, and gh sends credentials there. Write it
+	// positively (the shapes that are known not to name a host), never as a
+	// deny-list. Consulted by matchGNU only.
+	Value func(string) bool
+}
+
+// valueOK applies f.Value, if any, to a flag value.
+func (f flagSpec) valueOK(v string) bool {
+	return f.Value == nil || f.Value(v)
 }
 
 // isSignedInt reports whether tok is a bare signed integer like "-1" or "+2".
@@ -113,6 +126,12 @@ type commandSpec struct {
 	// there is no parallel list. Set it ONLY on leaf reader commands; never on a
 	// command that has any output-file/exec flag (see commands.go).
 	ArgvDataSafe bool
+
+	// Positional, when non-nil, must accept every literal positional of this leaf
+	// spec; a substituted one is rejected, since its value cannot be checked. The
+	// positional-side twin of flagSpec.Value: `gh repo view HOST/o/r` and
+	// `gh api https://HOST/x` send credentials to HOST. Consulted by matchGNU only.
+	Positional func(string) bool
 }
 
 // argToken is one parsed argv word handed to the matchers. It is either a literal
@@ -232,6 +251,9 @@ func (s *commandSpec) matchGNU(args []argToken) bool {
 					if !f.TakesArg && !f.OptionalArg {
 						return false
 					}
+					if !f.valueOK(arg[2+len(name)+1:]) {
+						return false
+					}
 				} else if f.TakesArg {
 					if i+1 >= len(args) {
 						return false
@@ -239,11 +261,17 @@ func (s *commandSpec) matchGNU(args []argToken) bool {
 					if args[i+1].subst {
 						return false // a flag's value must be literal, never substituted
 					}
+					if !f.valueOK(args[i+1].lit) {
+						return false
+					}
 					i++ // consume required value
 				} else if f.DashValueOK && i+1 < len(args) &&
 					!args[i+1].subst && isSignedInt(args[i+1].lit) {
 					// `--boot -1`: an OptionalArg flag whose ±offset value would
 					// otherwise parse as an unknown flag. Digits only — see DashValueOK.
+					if !f.valueOK(args[i+1].lit) {
+						return false
+					}
 					i++
 				}
 				// !hasVal && !TakesArg: fine (OptionalArg or no-arg flag, both work)
@@ -266,6 +294,9 @@ func (s *commandSpec) matchGNU(args []argToken) bool {
 					if f.TakesArg {
 						if j+1 < len(cluster) {
 							// Rest of cluster is the value; nothing more to scan.
+							if !f.valueOK(cluster[j+1:]) {
+								return false
+							}
 						} else {
 							// Cluster ends with a value-taking flag; consume next arg.
 							if i+1 >= len(args) {
@@ -274,12 +305,18 @@ func (s *commandSpec) matchGNU(args []argToken) bool {
 							if args[i+1].subst {
 								return false // a flag's value must be literal, never substituted
 							}
+							if !f.valueOK(args[i+1].lit) {
+								return false
+							}
 							consumedNext = true
 						}
 						break
 					}
 					if f.DashValueOK && j == len(cluster)-1 && i+1 < len(args) &&
 						!args[i+1].subst && isSignedInt(args[i+1].lit) {
+						if !f.valueOK(args[i+1].lit) {
+							return false
+						}
 						// `-b -1`: only when this flag ENDS the cluster, so the offset
 						// belongs to it and not to an earlier letter. Digits only.
 						consumedNext = true
@@ -340,6 +377,9 @@ func (s *commandSpec) dispatchSubcommand(args []argToken) bool {
 func (s *commandSpec) acceptPositionals(positionals []argToken) bool {
 	for _, a := range positionals {
 		if a.subst && !s.ArgvDataSafe {
+			return false
+		}
+		if s.Positional != nil && (a.subst || !s.Positional(a.lit)) {
 			return false
 		}
 	}

@@ -329,7 +329,12 @@ pi  -e /path/to/share/classify-bash/pi.ts
    - **text the tool will evaluate** — `nix eval --expr`/`--file`/`--apply`
      (Nix reads files and reaches the network), any `--eval`/`--script` shape;
    - **a config key/file that can set either of the above** — `jj --config`
-     sets `ui.pager`, which the read-only subcommands then spawn.
+     sets `ui.pager`, which the read-only subcommands then spawn;
+   - **a host, URL or remote the tool will talk to with your credentials** —
+     `gh api --hostname`, and any repository or endpoint argument that can carry
+     a host (`gh repo view HOST/o/r`, `gh api https://HOST/x`). Positionals count
+     too. Where the value must stay, constrain it with `flagSpec.Value` /
+     `commandSpec.Positional`: parse it, accept a positive shape, and fail closed.
 
    Each of these was found *shipped* in this whitelist, not hypothesised. The
    rule: **a flag whose value is a program — or a program text the tool will
