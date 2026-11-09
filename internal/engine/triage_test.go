@@ -43,7 +43,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"regexp"
 	"sort"
 	"strings"
 	"testing"
@@ -51,17 +50,85 @@ import (
 	"mvdan.cc/sh/v3/syntax"
 )
 
-// claudeScratchRe matches Claude Code's per-session scratchpad,
-// /tmp/claude-<uid>/<project>/<session uuid>/scratchpad.
-var claudeScratchRe = regexp.MustCompile(`/tmp/claude-[0-9]+/[^/\s"']+/[0-9a-f-]{36}/scratchpad`)
-
 // replayHost is the Host a logged command is replayed under: an empty
 // environment, as in the tables, plus the scratchpad the command names, if any.
 func replayHost(cmd string) testHost {
 	return testHost{
-		scratch:  claudeScratchRe.FindString(cmd),
+		scratch:  scratchFromCommand(cmd),
 		writable: func(string) bool { return true },
 	}
+}
+
+// scratchFromCommand returns the first Claude Code scratchpad named by a literal
+// in cmd, found by parsing: the command with mvdan/sh, so quoting is resolved the
+// way bash resolves it, and each literal's path by component. A command that does
+// not parse infers no scratchpad — the conservative answer.
+func scratchFromCommand(cmd string) string {
+	f, err := syntax.NewParser().Parse(strings.NewReader(cmd), "")
+	if err != nil {
+		return ""
+	}
+	found := ""
+	syntax.Walk(f, func(n syntax.Node) bool {
+		if found != "" {
+			return false
+		}
+		switch x := n.(type) {
+		case *syntax.Lit:
+			found = claudeScratchIn(x.Value)
+		case *syntax.SglQuoted:
+			found = claudeScratchIn(x.Value)
+		}
+		return true
+	})
+	return found
+}
+
+// claudeScratchIn returns the scratchpad a path inside s names, checked component
+// by component: /tmp/claude-<uid>/<project>/<session uuid>/scratchpad.
+func claudeScratchIn(s string) string {
+	i := strings.Index(s, "/tmp/claude-")
+	if i < 0 {
+		return ""
+	}
+	parts := strings.Split(s[i+1:], "/")
+	if len(parts) < 5 || parts[0] != "tmp" || parts[2] == "" || parts[4] != "scratchpad" {
+		return ""
+	}
+	uid, ok := strings.CutPrefix(parts[1], "claude-")
+	if !ok || !allDigits(uid) || !isUUID(parts[3]) {
+		return ""
+	}
+	return "/" + strings.Join(parts[:5], "/")
+}
+
+func allDigits(s string) bool {
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return s != ""
+}
+
+// isUUID checks the 8-4-4-4-12 lowercase-hex shape of a session id.
+func isUUID(s string) bool {
+	if len(s) != 36 {
+		return false
+	}
+	for i, r := range s {
+		switch i {
+		case 8, 13, 18, 23:
+			if r != '-' {
+				return false
+			}
+		default:
+			if !(r >= '0' && r <= '9' || r >= 'a' && r <= 'f') {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // logRecord mirrors the on-disk JSON record shape written by the logging
