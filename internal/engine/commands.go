@@ -1984,16 +1984,13 @@ func jjSpec() *commandSpec {
 		// --config/--config-file are excluded as an exec path: ui.pager is spawned by
 		// the read-only subcommands below, so `jj --config 'ui.pager=[…]' log` runs an
 		// arbitrary program (verified, jj 0.41). The remaining globals
-		// (--ignore-immutable, --at-operation, --ignore-working-copy, --debug,
+		// (--ignore-immutable, --at-operation, --no-integrate-operation, --debug,
 		// --color, --quiet, -V) are out for zero logged demand only, not danger —
 		// --ignore-immutable in particular is inert before a read-only subcommand.
 		// See DESIGN-jj-global-flags.md.
-		Flags: []flagSpec{
-			{Short: "R", Long: "repository", TakesArg: true},
-			{Long: "no-pager"},
-			{Long: "help"},
-		},
+		Flags: jjGlobalFlags(),
 		Subcommands: map[string]*commandSpec{
+			"file": jjFileSpec(),
 			"status":    {Style: styleGNU, AllowAnyPositional: true, Flags: jjCommonFlags()},
 			"st":        {Style: styleGNU, AllowAnyPositional: true, Flags: jjCommonFlags()},
 			"diff":      {Style: styleGNU, AllowAnyPositional: true, Flags: jjCommonFlags()},
@@ -2055,29 +2052,56 @@ func jjGitSpec() *commandSpec {
 // 0.41 dropped the flag name, which is a version accident, not a safety
 // property). See DESIGN.md "Flag values that are programs".
 func jjCommonFlags() []flagSpec {
-	return []flagSpec{
-		{Short: "r", Long: "revision", TakesArg: true},
+	return flagSet(jjGlobalFlags(), jjRevFlags(), flags(
 		// --from/--to take Jujutsu revsets: repository-history queries, not
 		// programs or evaluated expressions. Substituted shell values are still
 		// rejected by the generic literal-only flag-argument rule.
-		{Short: "f", Long: "from", TakesArg: true},
-		{Short: "t", Long: "to", TakesArg: true},
-		{Short: "p", Long: "patch"},
-		{Short: "s", Long: "summary"},
-		{Long: "stat"},
-		{Long: "name-only"},
-		{Long: "git"},
-		{Long: "color-words"},
-		{Long: "no-pager"},
-		{Long: "no-graph"},
-		{Long: "reversed"},
-		{Long: "limit", TakesArg: true},
-		{Long: "template", TakesArg: true},
-		{Short: "T", TakesArg: true},
-		{Long: "repository", TakesArg: true},
-		{Short: "R", TakesArg: true},
-		{Long: "help"},
-		{Short: "h", Long: "help"},
+		flagSpec{Short: "f", Long: "from", TakesArg: true},
+		flagSpec{Short: "t", Long: "to", TakesArg: true},
+		flagSpec{Short: "p", Long: "patch"},
+		flagSpec{Short: "s", Long: "summary"},
+		flagSpec{Long: "stat"},
+		flagSpec{Long: "name-only"},
+		flagSpec{Long: "git"},
+		flagSpec{Long: "color-words"},
+		flagSpec{Long: "no-graph"},
+		flagSpec{Long: "reversed"},
+		flagSpec{Long: "limit", TakesArg: true},
+	))
+}
+
+// jjGlobalFlags are the jj global options accepted, before a subcommand (jjSpec)
+// and after one (every read-only leaf). --ignore-working-copy only skips the
+// working-copy snapshot, so it can only remove a write; logged demand since
+// 2026-11-09. The excluded globals are listed in jjSpec.
+func jjGlobalFlags() []flagSpec {
+	return flags(
+		flagSpec{Short: "R", Long: "repository", TakesArg: true},
+		flagSpec{Long: "ignore-working-copy"},
+		flagSpec{Long: "no-pager"},
+		flagSpec{Short: "h", Long: "help"},
+	)
+}
+
+// jjRevFlags select what to show: a revision and a template. A jj template is
+// jj's own data-formatting language — it reads commit data, it runs nothing.
+func jjRevFlags() []flagSpec {
+	return flags(
+		flagSpec{Short: "r", Long: "revision", TakesArg: true},
+		flagSpec{Short: "T", Long: "template", TakesArg: true},
+	)
+}
+
+// jjFileSpec whitelists the read-only `jj file show` and `jj file list` (flags
+// from jj 0.44's help; positionals are filesets). The mutating siblings — track,
+// untrack, chmod — and annotate (no logged demand) are absent.
+func jjFileSpec() *commandSpec {
+	leaf := func() *commandSpec {
+		return &commandSpec{Style: styleGNU, AllowAnyPositional: true, Flags: flagSet(jjGlobalFlags(), jjRevFlags())}
+	}
+	return &commandSpec{
+		Style:       styleGNU,
+		Subcommands: map[string]*commandSpec{"show": leaf(), "list": leaf()},
 	}
 }
 

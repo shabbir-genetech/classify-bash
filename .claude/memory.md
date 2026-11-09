@@ -49,7 +49,10 @@ README.md — this file is for how we work, not what the code is.)
   ```
 
   It calls `classifyCommand`/`safeCommands` directly, so its verdicts are the
-  classifier's own; add `SHOW=<tag>` to print verbatim examples for a tag. It
+  classifier's own; add `SHOW=<tag>` to print verbatim examples for a tag. Its
+  "would allow now" count is the before/after measure of a change, and
+  `scripts/replay-diff.sh <rev>` lists every record whose decision changed
+  against a revision — the per-record equality check for a refactor. It
   skips without `CORPUS`, so `go test ./...` is unaffected. Three reasons not to
   hand-roll this again, each a bug that shipped a wrong conclusion:
   - **Never regex-split a command to find the blocker.** Splitting on `&&`/`;`

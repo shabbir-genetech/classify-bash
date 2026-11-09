@@ -159,6 +159,7 @@ nix flake check      # runs 2 checks: the corpus (checks.tests) AND a permissive
                      # license guard (checks.licenses, go-licenses check) — MUST pass
 nix build            # build the binary as a Nix derivation -> ./result/bin/classify-bash
 go run scripts/mutate.go testdata/mutants/*.json   # mutation pass: every safety check must be caught
+CORPUS=corpus.jsonl scripts/replay-diff.sh master  # per-record decisions vs a rev; exit 1 if an allow is lost
 ./scripts/gen-third-party-licenses.sh  # regenerate THIRD_PARTY_LICENSES (in nix develop)
 ```
 

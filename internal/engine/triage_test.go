@@ -239,6 +239,27 @@ func TestTriage(t *testing.T) {
 	}
 }
 
+// TestReplayDecisions writes "<record index> <decision>" for every fall-through in
+// $CORPUS to $DECISIONS. Two trees' outputs, diffed, are the per-record replay
+// equality check for a refactor or a whitelist change (scripts/replay-diff.sh).
+func TestReplayDecisions(t *testing.T) {
+	path := os.Getenv("DECISIONS")
+	if path == "" {
+		t.Skip("set DECISIONS=<output file> (and CORPUS) to dump replay decisions")
+	}
+	recs := readCorpus(t)
+	out, err := os.Create(path)
+	if err != nil {
+		t.Fatalf("create %s: %v", path, err)
+	}
+	defer out.Close()
+	for i, r := range recs {
+		if r.Kind == "fallthrough" && r.Command != "" {
+			fmt.Fprintf(out, "%d %d\n", i, classifyCommandIn(r.Command, replayHost(r.Command)))
+		}
+	}
+}
+
 // blameCommand returns a tag naming the first construct that blocks cmd.
 func blameCommand(parser *syntax.Parser, cmd string) string {
 	f, err := parser.Parse(strings.NewReader(cmd), "")

@@ -89,7 +89,9 @@ func jjSpec() *commandSpec {
 
 `--ignore-working-copy` was proposed on a safety argument rather than log demand
 (0 occurrences). **Dropped at sign-off** to hold the line at zero-demand flags;
-the 147-record win does not depend on it.
+the 147-record win does not depend on it. **Added 2026-11-09**, once the log
+showed demand: it is now in `jjGlobalFlags()`, accepted before and after the
+subcommand, together with `jj file show|list`.
 
 ## Corrections found during implementation
 

@@ -1,0 +1,23 @@
+[
+ {
+  "name": "jj: --config re-added to the globals",
+  "file": "internal/engine/commands.go",
+  "old": "\t\tflagSpec{Long: \"no-pager\"},\n\t\tflagSpec{Short: \"h\", Long: \"help\"},",
+  "new": "\t\tflagSpec{Long: \"no-pager\"},\n\t\tflagSpec{Long: \"config\", TakesArg: true},\n\t\tflagSpec{Short: \"h\", Long: \"help\"},",
+  "expect": "killed"
+ },
+ {
+  "name": "jj: --tool re-added to the leaf flags",
+  "file": "internal/engine/commands.go",
+  "old": "\t\tflagSpec{Long: \"limit\", TakesArg: true},\n\t))",
+  "new": "\t\tflagSpec{Long: \"limit\", TakesArg: true},\n\t\tflagSpec{Long: \"tool\", TakesArg: true},\n\t))",
+  "expect": "killed"
+ },
+ {
+  "name": "jj: file track re-added",
+  "file": "internal/engine/commands.go",
+  "old": "Subcommands: map[string]*commandSpec{\"show\": leaf(), \"list\": leaf()},",
+  "new": "Subcommands: map[string]*commandSpec{\"show\": leaf(), \"list\": leaf(), \"track\": leaf()},",
+  "expect": "killed"
+ }
+]

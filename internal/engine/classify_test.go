@@ -171,6 +171,15 @@ func TestMustAllow(t *testing.T) {
 		"jj -R /tmp git remote list",
 		"jj -R /tmp op log",
 		"jj --no-pager log",
+		"jj --ignore-working-copy log -r @",
+		"jj -R /tmp --ignore-working-copy st",
+		"jj log --ignore-working-copy --no-graph",
+		// jj file show / list (filesets are positionals)
+		"jj -R /tmp file show master:go.mod",
+		"jj -R /tmp file list",
+		"jj file show -r @- go.mod",
+		"jj file list -r @ -T 'path ++ \"\\n\"'",
+		`jj file show -R /tmp --ignore-working-copy -r abc 'root:"src/main.go"'`,
 		// journalctl -b takes a ±offset, whose spelling collides with flag syntax.
 		"journalctl -b -1",
 		"journalctl --boot -1",
@@ -577,6 +586,15 @@ func TestMustNotAllow(t *testing.T) {
 		"jj show --tool /tmp/evil",
 		"jj op show --tool /tmp/evil",
 		"jj -R /tmp diff --tool /tmp/evil",
+		// jj file: only show/list; the exec-path exclusions hold on them too.
+		"jj file track x",
+		"jj file untrack x",
+		"jj file chmod x f",
+		"jj file show --tool /tmp/evil f",
+		`jj file show --config 'ui.pager=["sh","-c","touch /tmp/x"]' f`,
+		`jj --config-file /tmp/evil.toml file list`,
+		`jj file show -r "$(echo @)" f`, // substituted revision
+		"jj file", // no subcommand
 		// --config-toml: removed in jj 0.41, but the same config-injection class
 		// as --config (ui.pager is spawned by these very subcommands). Kept out on
 		// the class, not on the version accident.
@@ -879,9 +897,8 @@ func TestNotYetAllowed(t *testing.T) {
 		`jj log "$(ls)"`, // jj log REVSET is read-only; subcommand positionals not wired
 		// Read-only jj subcommands with no spec yet; the -R global flag now
 		// parses, but the subcommand lookup still misses.
-		"jj -R /tmp file show master:go.mod",
-		"jj -R /tmp file list",
 		"jj -R /tmp config list",
+		"jj file annotate f", // read-only, no logged demand
 		`find . -name "$(ls)"`,    // -name PATTERN is a read-only predicate (a flag argument)
 		`head -n "$(ls)" file`,    // -n COUNT on an ArgvDataSafe reader; substituted flag arg
 		"echo \"$(ls `whoami`)\"", // inner is read-only, but uses an unquoted backquote subst
