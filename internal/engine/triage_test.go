@@ -350,15 +350,42 @@ func blameCmd(cmd syntax.Command, sc *scope) string {
 		})
 		return tag
 	case *syntax.ForClause:
-		return "<for/while loop>"
+		name, vals, ok := forLoop(c, sc)
+		if !ok {
+			return "<for loop: not `for NAME in LITERAL…`>"
+		}
+		if onlyAssignments(c.Do) {
+			return "<for loop: body of only assignments>"
+		}
+		for _, v := range vals {
+			body := sc.child()
+			body.vars[name] = v
+			for _, s := range c.Do {
+				if !classifyStmtBind(s, body) {
+					return blameStmt(s, body)
+				}
+			}
+			if !forBodyOK(c, sc, name, v) {
+				return "<for loop: body binds a variable>"
+			}
+		}
+		return "<for loop: no blocker found>"
 	case *syntax.WhileClause:
-		return "<for/while loop>"
+		return "<while loop>"
 	case *syntax.IfClause:
 		return "<if>"
 	case *syntax.CaseClause:
 		return "<case>"
 	case *syntax.Block:
-		return "<block { }>"
+		if onlyAssignments(c.Stmts) {
+			return "<block { } of only assignments>"
+		}
+		for _, s := range c.Stmts {
+			if !classifyStmtBind(s, sc) {
+				return blameStmt(s, sc)
+			}
+		}
+		return "<block { }: no blocker found>"
 	case *syntax.FuncDecl:
 		return "<function decl>"
 	case *syntax.TestClause:

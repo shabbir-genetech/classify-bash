@@ -1,0 +1,68 @@
+[
+ {
+  "name": "changedNames: forgotten names",
+  "file": "internal/engine/classify.go",
+  "old": "\tfor k := range parent.vars {\n\t\tif _, bound := child.vars[k]; !bound {\n\t\t\tout = append(out, k)",
+  "new": "\tfor k := range parent.vars {\n\t\tif _, bound := child.vars[k]; !bound && false {\n\t\t\tout = append(out, k)",
+  "expect": "killed"
+ },
+ {
+  "name": "block: child scope instead of same",
+  "file": "internal/engine/classify.go",
+  "old": "return !onlyAssignments(c.Stmts) && classifyStmts(c.Stmts, sc)",
+  "new": "return !onlyAssignments(c.Stmts) && classifyStmts(c.Stmts, sc.child())",
+  "expect": "killed"
+ },
+ {
+  "name": "block: only-assignments allowed",
+  "file": "internal/engine/classify.go",
+  "old": "return !onlyAssignments(c.Stmts) && classifyStmts(c.Stmts, sc)",
+  "new": "return classifyStmts(c.Stmts, sc)",
+  "expect": "killed"
+ },
+ {
+  "name": "for: value character set",
+  "file": "internal/engine/loops.go",
+  "old": "var forValue = allOf(nonEmpty, runesIn(\"-_./:@%+,=\"))",
+  "new": "var forValue = nonEmpty",
+  "expect": "survives",
+  "why": "a glob/brace/tilde value is still checked by every downstream spec and path rule; brace -{o,}x is refused by sort's flag parser. The set is the first lock"
+ },
+ {
+  "name": "for: name must be bindable",
+  "file": "internal/engine/loops.go",
+  "old": "\tif !bindableName(it.Name.Value, sc.host) {\n\t\treturn \"\", nil, false",
+  "new": "\tif !bindableName(it.Name.Value, sc.host) && false {\n\t\treturn \"\", nil, false",
+  "expect": "killed"
+ },
+ {
+  "name": "for: binds FIRST value after",
+  "file": "internal/engine/loops.go",
+  "old": "sc.vars[name] = vals[len(vals)-1]",
+  "new": "sc.vars[name] = vals[0]",
+  "expect": "killed"
+ },
+ {
+  "name": "for: body bindings ignored",
+  "file": "internal/engine/loops.go",
+  "old": "return classifyStmts(c.Do, body) && len(changedNames(base, body)) == 0",
+  "new": "return classifyStmts(c.Do, body)",
+  "expect": "killed"
+ },
+ {
+  "name": "for: body of only assignments",
+  "file": "internal/engine/loops.go",
+  "old": "if !ok || onlyAssignments(c.Do) {",
+  "new": "if !ok {",
+  "expect": "survives",
+  "why": "a body of only assignments binds a name, which forBodyOK refuses too"
+ },
+ {
+  "name": "for: positional-params form",
+  "file": "internal/engine/loops.go",
+  "old": "!it.InPos.IsValid() ||",
+  "new": "",
+  "expect": "survives",
+  "why": "`for f; do` has no Items, so the len(it.Items) == 0 check refuses it too"
+ }
+]

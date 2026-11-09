@@ -51,12 +51,29 @@ func (s *scope) child() *scope {
 func (s *scope) sub(f func(*scope) bool) bool {
 	c := s.child()
 	ok := f(c)
-	for k, v := range c.vars {
-		if old, bound := s.vars[k]; !bound || old != v {
-			delete(s.vars, k)
-		}
+	for _, k := range changedNames(s, c) {
+		delete(s.vars, k)
 	}
 	return ok
+}
+
+// changedNames lists every name whose binding differs between parent and child:
+// new names, rebindings, AND names the child forgot. The last matters at depth:
+// in `ls && { true && S=x; }` the inner sub makes the group forget S, and unless
+// that absence propagates, the outer level would keep checking S's old value.
+func changedNames(parent, child *scope) []string {
+	var out []string
+	for k, v := range child.vars {
+		if old, bound := parent.vars[k]; !bound || old != v {
+			out = append(out, k)
+		}
+	}
+	for k := range parent.vars {
+		if _, bound := child.vars[k]; !bound {
+			out = append(out, k)
+		}
+	}
+	return out
 }
 
 // classifyCommandIn parses cmd as bash and returns decisionAllow only when every
@@ -156,8 +173,15 @@ func classifyCmd(cmd syntax.Command, sc *scope) bool {
 		// on its own; same rule as && / ||. Parens are just a scope boundary,
 		// not a bypass: bindings come in, none go out.
 		return sc.sub(func(in *scope) bool { return classifyStmts(c.Stmts, in) })
-	case *syntax.Block,
-		*syntax.IfClause, *syntax.ForClause, *syntax.WhileClause, *syntax.CaseClause,
+	case *syntax.Block:
+		// { …; } runs in the CURRENT shell, so it classifies in sc itself: a
+		// binding made inside holds afterwards, exactly as in bash. A redirect on
+		// the group was checked by classifyStmt and covers all of its output. A
+		// group of only assignments is refused, like a command of only them.
+		return !onlyAssignments(c.Stmts) && classifyStmts(c.Stmts, sc)
+	case *syntax.ForClause:
+		return classifyFor(c, sc)
+	case *syntax.IfClause, *syntax.WhileClause, *syntax.CaseClause,
 		*syntax.FuncDecl, *syntax.LetClause, *syntax.TimeClause, *syntax.CoprocClause,
 		*syntax.TestClause, *syntax.DeclClause, *syntax.ArithmCmd:
 		// Out of scope for v1: too easy to hide writes inside these.

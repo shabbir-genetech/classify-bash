@@ -105,9 +105,11 @@ Reading in this order is the fastest way to understand one event end to end:
   JSON contract").
 - **`internal/engine/classify.go`** — the shell-AST walk. `classifyCommandIn(cmd,
   host)` parses with `mvdan.cc/sh/v3/syntax` and walks with a `scope` (literal
-  bindings + the Host). `&&`/`||`/pipe/`(subshell)` recurse — and decide which
-  bindings each side sees — every other compound kind is rejected, an unknown AST
-  node or binary operator calls `failLoud`. `wordLiteral` (still used for the
+  bindings + the Host). `&&`/`||`/pipe/`(subshell)` recurse through `scope.sub`,
+  which forgets afterwards every name the child bound, rebound or forgot (never
+  just drops it — a dropped rebinding left the old value checked); `{ …; }` recurses
+  in the current scope; literal `for` loops are `loops.go`; every other compound
+  kind is rejected, and an unknown AST node or binary operator calls `failLoud`. `wordLiteral` (still used for the
   command name, which must stay literal) rejects any expansion; `resolveWord` is
   `wordLiteral` plus bound `$VAR`. `argTokens` classifies each operand as a literal
   or as an opaque token, the one allowed kind of unseen value: a quoted `"$(...)"`

@@ -555,7 +555,15 @@ names only**.
 
 ---
 
-## 7. `for X in <literal words>; do <read body>; done` — **RESEARCH (depends on §6)**
+## 7. `for X in <literal words>; do <read body>; done` — **IMPLEMENTED (2026-11-09)**
+
+Shipped as designed below, in `loops.go`, together with `{ …; }` groups; the rules
+are DESIGN.md "AST handling". Two things the design did not foresee: a body that
+binds any name is refused outright rather than tracked across iterations, and the
+scope work exposed that dropping a child scope's bindings was itself unsafe (see
+DESIGN.md "Literal-bound variables", fixed the same day). Replay: groups and loops
+together turned 177 more post-10-24 records into allows (548 cumulative with this
+pass's other changes), 0 lost.
 
 ### Idea
 `for`-loops appeared in the corpus over **literal word lists** with read-only

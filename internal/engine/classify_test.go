@@ -379,6 +379,20 @@ func TestMustAllow(t *testing.T) {
 		"pgrep -af '^/nix/store/.*/code'",
 		"pgrep -x code",
 		"pgrep -c -u demo bash",
+		// { …; } groups run in the current shell
+		"{ ls; pwd; }",
+		"{ ls; date; } > /dev/null",
+		"{ echo a; cat /etc/hostname; } | head -1",
+		`{ S=/tmp; ls "$S"; }; ls "$S"`, // a binding made in a group holds after it
+		"ls && { pwd; date; }",
+		// for over literal words
+		`for f in a b; do echo "$f"; done`,
+		`for f in a.php b.php; do git show "HEAD:$f"; done`,
+		`for x in 1 2 3; do cat "/tmp/$x.txt"; done`,
+		`for f in a b; do echo "$f"; done; echo "$f"`, // holds the last value after
+		`D=/tmp; for f in x y; do ls "$D/$f"; done`,
+		`for f in a b; do echo "$f"; done | sort`,
+		`for f in a b; do { echo "$f"; ls; }; done`,
 
 		// §8 permutation guard: a *whitelisted* flag after a positional still allows
 		// (no regression for the common "flag after a revision/arg" idiom).
@@ -765,7 +779,27 @@ func TestMustNotAllow(t *testing.T) {
 		`S=/dev/null; true && S=/etc/passwd; echo x > "$S"`,
 		`S=/dev/null; ls && S=/etc/passwd; echo x > "$S"`,
 		`S=/dev/null; false || S=/etc/passwd; echo x > "$S"`,
-		`S=/dev/null; ls && { true && S=/etc/passwd; }; echo x > "$S"`,
+		`S=/dev/null; ls && { true && S=/etc/passwd; }; echo x > "$S"`, // forgetting propagates
+		// { …; } groups: same-scope bindings, and every inner and outer check holds.
+		"{ rm x; }",
+		"{ ls; rm x; }",
+		"{ ls; } > /etc/x",
+		"{ ls; } &",
+		`S=/dev/null; { S=/etc/passwd; echo; }; echo x > "$S"`, // a group binds in place
+		`{ S=/etc/passwd; }; echo x > "$S"`,                    // a group of only assignments
+		"{ A=1; }",                                             // a state change in a persistent shell
+		// for loops: what the body sees must be what bash runs.
+		`for f in a; do rm "$f"; done`,
+		`for f in /dev/null /etc/passwd; do echo; done; echo x > "$f"`, // holds the LAST value
+		`S=/dev/null; for f in a; do S=/etc/passwd; echo; done; echo x > "$S"`,
+		`S=/dev/null; for f in a; do true && S=/etc/passwd; done; echo x > "$S"`,
+		`for f in /dev/null; do f=/etc/passwd; echo; done; echo x > "$f"`,
+		`for PATH in /tmp; do ls; done`,                     // exported name: changes what runs
+		`for f in -{o,}x; do sort "$f" /etc/hostname; done`, // brace: bash runs sort -ox
+		`for f in a b; do echo "$f"; done > /etc/x`,         // redirect on the loop
+		`for f in a; do echo "$f" & done`,                   // background body
+		`for f in "$(echo /etc/passwd)"; do echo x > "$f"; done`,
+		`for f in a; do X=1; done`, // body of only assignments
 		// "$?" is opaque only in its plain form: each operator below can run a command.
 		`echo "${?:-$(touch /tmp/x)}"`,
 		`echo "${?/0/$(touch /tmp/x)}"`,
@@ -951,13 +985,17 @@ func TestNotYetAllowed(t *testing.T) {
 		"cd $HOME", // only effect is a chdir, harmless for any target
 		`cd "$HOME"`,
 
-		// Control structures / brace blocks with safe bodies — structurally out of
-		// scope, but these exact forms only read/print.
+		// Control structures with safe bodies — structurally out of scope, but
+		// these exact forms only read/print.
 		"if true; then echo x; fi",
-		"for f in *; do echo $f; done",
+		"for f in *; do echo $f; done", // a glob list: values the classifier cannot see
+		"for f in *; do echo \"$f\"; done",
+		"for d in ~; do echo \"$d\"; done", // tilde: bash's value differs from the text
+		"for f; do echo \"$f\"; done",      // iterates the positional parameters
+		"select f in a; do echo; done",     // interactive
+		"for ((i=0; i<3; i++)); do echo; done",
 		"while read l; do echo $l; done",
 		"case $x in a) echo a;; esac",
-		"{ ls; pwd; }",
 
 		// Read-only forms of unwhitelisted script/archive tools.
 		"sed -n '1,10p' file", // print a line range to stdout

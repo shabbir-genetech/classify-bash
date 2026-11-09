@@ -404,8 +404,18 @@ handled conservatively:
   operator fails loud.
 - An **assignment-only** statement is accepted as a binding, never on its own: a
   command made only of assignments falls through.
-- `Block` and every other compound kind (`If`/`For`/`While`/`Case`/`FuncDecl`/
-  `Let`/`Time`/`Coproc`/`Test`/`Decl`/`Arithm`) are **rejected**.
+- `Block` (`{ …; }`, since 2026-11-09) **recurses in the current scope**: bash runs
+  a group in the current shell, so a binding made inside holds after it. A redirect
+  on the group is checked once and covers its output; a group of only assignments
+  falls through like a command of only assignments.
+- `For` (since 2026-11-09) is accepted in one shape only, `for NAME in WORD…; do
+  BODY; done` (FUTURE-WORK §7, `loops.go`): a bindable name, values that parse to
+  single path-like words (no glob, brace, tilde or whitespace, so bash's value is
+  the checked one), and a body that classifies safe for every value and binds
+  nothing. Afterwards the name holds the last value, as in bash.
+- Every other compound kind (`If`/`While`/`Case`/`FuncDecl`/`Let`/`Time`/
+  `Coproc`/`Test`/`Decl`/`Arithm`, and `select`, C-style `for ((…))`, `for x; do`)
+  is **rejected**.
 - An unrecognized AST node kind → fail loud, exit 2. A new `mvdan/sh` release
   that introduces a node we do not handle should stop the classifier, not be
   silently treated as safe.

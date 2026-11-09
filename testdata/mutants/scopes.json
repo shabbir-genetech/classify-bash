@@ -2,15 +2,15 @@
  {
   "name": "sub: forgetting disabled",
   "file": "internal/engine/classify.go",
-  "old": "\t\t\tdelete(s.vars, k)\n",
-  "new": "\t\t\t_ = k\n",
+  "old": "\tfor _, k := range changedNames(s, c) {\n\t\tdelete(s.vars, k)\n",
+  "new": "\tfor _, k := range changedNames(s, c) {\n\t\t_ = k\n",
   "expect": "killed"
  },
  {
-  "name": "sub: only new names forgotten",
+  "name": "changedNames: rebindings missed",
   "file": "internal/engine/classify.go",
-  "old": "if old, bound := s.vars[k]; !bound || old != v {",
-  "new": "if old, bound := s.vars[k]; !bound && old != v {",
+  "old": "if old, bound := parent.vars[k]; !bound || old != v {",
+  "new": "if old, bound := parent.vars[k]; !bound && old != v {",
   "expect": "killed"
  },
  {
